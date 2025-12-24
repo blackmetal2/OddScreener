@@ -25,6 +25,7 @@ import {
   calculatePriceChange,
 } from './polymarket';
 import { PolymarketMarket, PolymarketPricePoint } from './types';
+import { getBatchMarketPriceChanges } from './snapshots';
 
 /**
  * Normalize a Polymarket market to our Market type
@@ -135,7 +136,7 @@ function calculateTrendingScore(pm: PolymarketMarket): number {
  * Fetch all markets from Polymarket with pagination and quality filtering
  */
 export async function getAllMarkets(
-  limit: number = 2000,
+  limit: number = 10000,
   fetchPriceChanges: boolean = false
 ): Promise<Market[]> {
   try {
@@ -153,28 +154,50 @@ export async function getAllMarkets(
       trendingScores.set(pm.id, calculateTrendingScore(pm));
     }
 
-    // Normalize markets (with rate limiting for price changes)
+    // Normalize markets (without individual price change fetching - we'll use snapshots)
     const normalizePromises: Promise<Market>[] = [];
-
-    // Fetch price changes for top 100 markets (visible on first pages)
-    const topCount = fetchPriceChanges ? 100 : 0;
 
     for (let i = 0; i < polymarketData.length; i++) {
       normalizePromises.push(
-        normalizePolymarketMarket(polymarketData[i], i < topCount)
+        normalizePolymarketMarket(polymarketData[i], false) // Don't fetch individual price changes
       );
     }
 
     const markets = await Promise.all(normalizePromises);
 
-    // Attach trending scores to markets
-    const marketsWithTrending = markets.map((market) => ({
-      ...market,
-      trendingScore: trendingScores.get(market.id) || 0,
-    }));
+    // Get price changes from Upstash snapshots (one batch call for all markets)
+    let priceChangesMap = new Map<string, { change1h: number; change6h: number; change24h: number }>();
+    try {
+      priceChangesMap = await getBatchMarketPriceChanges(
+        markets.map((m) => ({ id: m.id, probability: m.probability }))
+      );
+      console.log(`[Markets] Got price changes from snapshots for ${priceChangesMap.size} markets`);
+    } catch (e) {
+      console.error('[Markets] Error fetching snapshot price changes:', e);
+      // Continue without snapshot changes - markets will have API-provided 24h change only
+    }
+
+    // Apply snapshot-based price changes to markets
+    const marketsWithChanges = markets.map((market) => {
+      const changes = priceChangesMap.get(market.id);
+      if (changes) {
+        // Use snapshot changes if available, otherwise keep original
+        return {
+          ...market,
+          change1h: changes.change1h || market.change1h,
+          change6h: changes.change6h || market.change6h,
+          change24h: changes.change24h || market.change24h,
+          trendingScore: trendingScores.get(market.id) || 0,
+        };
+      }
+      return {
+        ...market,
+        trendingScore: trendingScores.get(market.id) || 0,
+      };
+    });
 
     // Sort by volume descending (default)
-    return marketsWithTrending.sort((a, b) => b.volume24h - a.volume24h);
+    return marketsWithChanges.sort((a, b) => b.volume24h - a.volume24h);
   } catch (error) {
     console.error('Error fetching all markets:', error);
     return [];

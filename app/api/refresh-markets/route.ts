@@ -38,9 +38,9 @@ export async function GET(request: Request) {
       }
     }
 
-    // Fetch all markets from Polymarket (2000+ with quality filtering)
+    // Fetch all markets from Polymarket (10,000 max with quality filtering)
     console.log('[Refresh] Fetching markets from Polymarket...');
-    const markets = await getAllMarkets(2000, false);
+    const markets = await getAllMarkets(10000, false);
 
     // Calculate basic stats
     const stats: GlobalStats = {

@@ -284,7 +284,6 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
           label="Whale Tracker"
           href="/whales"
           active={pathname === '/whales'}
-          badge="NEW"
         />
         <SidebarItem
           icon={
