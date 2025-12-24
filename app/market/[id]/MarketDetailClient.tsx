@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { MarketDetail, MarketTrade, MarketHolder, NewsArticle } from '@/types/market';
 import { fetchHolders, fetchMarketNews } from '@/app/actions/markets';
 import { useMarketWebSocket } from '@/lib/hooks/useMarketWebSocket';
@@ -16,7 +16,10 @@ import {
   cn,
 } from '@/lib/utils';
 import VolumeFlowChart from '@/components/charts/VolumeFlowChart';
-import { processTradesForVolumeChart } from '@/lib/utils/volumeAggregator';
+import TradeScatterChart from '@/components/charts/TradeScatterChart';
+import { processTradesForVolumeChart, VolumeMetric } from '@/lib/utils/volumeAggregator';
+
+type ChartView = 'line' | 'dots';
 
 interface WatchlistItem {
   id: string;
@@ -48,16 +51,58 @@ export default function MarketDetailClient({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'trades' | 'positions' | 'news'>('trades');
   const [chartTimeframe, setChartTimeframe] = useState<'1h' | '6h' | '24h' | '7d' | '30d' | 'all'>('24h');
+  const [volumeMetric, setVolumeMetric] = useState<VolumeMetric>('usd');
+  const [chartView, setChartView] = useState<ChartView>('line');
+  const [showDotsOverlay, setShowDotsOverlay] = useState(false);
+  const [highlightedTradeId, setHighlightedTradeId] = useState<string | null>(null);
   const [holders, setHolders] = useState<MarketHolder[]>([]);
   const [holdersLoading, setHoldersLoading] = useState(false);
   const [news, setNews] = useState<NewsArticle[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const isMulti = market.marketType === 'multi' && market.outcomes;
 
+  // Refs for trade rows (for scroll-into-view)
+  const tradeRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Handle trade click from scatter chart
+  const handleTradeClick = useCallback((tradeId: string) => {
+    // Clear any existing timeout
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
+
+    // Set highlighted trade
+    setHighlightedTradeId(tradeId);
+    setActiveTab('trades');
+
+    // Scroll to the trade row after a brief delay to allow tab switch
+    setTimeout(() => {
+      const rowElement = tradeRowRefs.current.get(tradeId);
+      if (rowElement) {
+        rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+
+    // Clear highlight after 3 seconds
+    highlightTimeoutRef.current = setTimeout(() => {
+      setHighlightedTradeId(null);
+    }, 3000);
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Volume chart data processed from trades
   const volumeChartData = useMemo(() => {
-    return processTradesForVolumeChart(trades, chartTimeframe);
-  }, [trades, chartTimeframe]);
+    return processTradesForVolumeChart(trades, chartTimeframe, volumeMetric);
+  }, [trades, chartTimeframe, volumeMetric]);
 
   // Real-time market data state
   const [liveMarket, setLiveMarket] = useState<MarketDetail>(market);
@@ -263,8 +308,6 @@ export default function MarketDetailClient({
               </>
             );
           })()}
-          <span className="text-text-muted">•</span>
-          <span className="text-text-secondary">{formatCompactNumber(market.uniqueTraders)} Positions</span>
         </div>
       </header>
 
@@ -349,8 +392,76 @@ export default function MarketDetailClient({
 
           {/* Volume Flow Chart */}
           <div className="bg-surface rounded-xl border border-border p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-text-primary">Volume Flow</h2>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h2 className="text-lg font-semibold text-text-primary">Volume Flow</h2>
+                {/* Chart View Toggle (Line/Dots) */}
+                <div className="flex items-center gap-0.5 bg-background rounded-lg p-0.5 border border-border">
+                  <button
+                    onClick={() => setChartView('line')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                      chartView === 'line'
+                        ? 'bg-accent text-background shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                    )}
+                  >
+                    Line
+                  </button>
+                  <button
+                    onClick={() => setChartView('dots')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                      chartView === 'dots'
+                        ? 'bg-accent text-background shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                    )}
+                  >
+                    Dots
+                  </button>
+                </div>
+                {/* Overlay Checkbox (only when in Line view) */}
+                <label
+                  className={cn(
+                    'flex items-center gap-1.5 text-xs cursor-pointer transition-opacity',
+                    chartView === 'dots' ? 'opacity-40 pointer-events-none' : ''
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showDotsOverlay}
+                    onChange={(e) => setShowDotsOverlay(e.target.checked)}
+                    disabled={chartView === 'dots'}
+                    className="w-3.5 h-3.5 rounded border-border bg-background text-accent focus:ring-accent focus:ring-offset-0"
+                  />
+                  <span className="text-text-secondary">Overlay</span>
+                </label>
+                {/* Metric Toggle */}
+                <div className="flex items-center gap-0.5 bg-background rounded-lg p-0.5 border border-border">
+                  <button
+                    onClick={() => setVolumeMetric('usd')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                      volumeMetric === 'usd'
+                        ? 'bg-accent text-background shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                    )}
+                  >
+                    USD
+                  </button>
+                  <button
+                    onClick={() => setVolumeMetric('shares')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                      volumeMetric === 'shares'
+                        ? 'bg-accent text-background shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                    )}
+                  >
+                    Shares
+                  </button>
+                </div>
+              </div>
               <div className="flex items-center gap-0.5 bg-background rounded-lg p-1 border border-border">
                 {(['1h', '6h', '24h', '7d', '30d', 'all'] as const).map((t) => (
                   <button
@@ -368,11 +479,33 @@ export default function MarketDetailClient({
                 ))}
               </div>
             </div>
-            <div className="h-64 min-h-[256px] w-full min-w-[200px]">
-              <VolumeFlowChart
-                chartData={volumeChartData.chartData}
-                outcomeNames={volumeChartData.outcomeNames}
-              />
+            {/* Chart Container */}
+            <div className="h-64 min-h-[256px] w-full min-w-[200px] relative">
+              {/* Line Chart (show when line view or in dots view with overlay) */}
+              {(chartView === 'line' || (chartView === 'dots' && showDotsOverlay)) && (
+                <div className={cn('absolute inset-0', chartView === 'dots' && showDotsOverlay ? 'z-0' : '')}>
+                  <VolumeFlowChart
+                    chartData={volumeChartData.chartData}
+                    outcomeNames={volumeChartData.outcomeNames}
+                    metric={volumeMetric}
+                  />
+                </div>
+              )}
+              {/* Scatter Chart (show when dots view) */}
+              {chartView === 'dots' && (
+                <div className={cn(
+                  'absolute inset-0',
+                  showDotsOverlay ? 'z-10' : ''
+                )}>
+                  <TradeScatterChart
+                    trades={trades}
+                    metric={volumeMetric}
+                    timeframe={chartTimeframe}
+                    onTradeClick={handleTradeClick}
+                    isOverlay={showDotsOverlay}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -448,8 +581,18 @@ export default function MarketDetailClient({
                           {trades.map((trade) => (
                             <tr
                               key={trade.id}
+                              ref={(el) => {
+                                if (el) {
+                                  tradeRowRefs.current.set(trade.id, el);
+                                } else {
+                                  tradeRowRefs.current.delete(trade.id);
+                                }
+                              }}
                               onClick={() => router.push(`/trader/${trade.traderAddress}`)}
-                              className="border-b border-border/50 hover:bg-surface-hover/50 transition-colors cursor-pointer group"
+                              className={cn(
+                                'border-b border-border/50 hover:bg-surface-hover/50 transition-all cursor-pointer group',
+                                highlightedTradeId === trade.id && 'bg-amber-500/20 border-l-4 border-l-amber-400 animate-pulse'
+                              )}
                             >
                               <td className="py-3 px-4 w-[180px]">
                                 <div className="flex items-center gap-2">
@@ -686,10 +829,6 @@ export default function MarketDetailClient({
               <div className="flex justify-between">
                 <span className="text-text-secondary text-sm">Liquidity</span>
                 <span className="font-mono text-sm text-text-primary">{formatNumber(market.liquidityDepth)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-secondary text-sm">Unique Traders</span>
-                <span className="font-mono text-sm text-text-primary">{formatCompactNumber(market.uniqueTraders)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-secondary text-sm">1H Change</span>

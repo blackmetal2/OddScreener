@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar, { HamburgerIcon } from '@/components/layout/Sidebar';
 import StatsBar from '@/components/layout/StatsBar';
@@ -41,7 +41,8 @@ export default function MarketsPageClient({
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(defaultFilters);
   const [markets, setMarkets] = useState<Market[]>(initialMarkets);
-  const [currentPage, setCurrentPage] = useState(1); // Always start at 1, sync from URL in effect
+  const [currentPage, setCurrentPage] = useState(urlPage);
+  const isProgrammaticNavRef = useRef(false); // Track when we're updating URL ourselves
   const marketsPerPage = 50;
 
   // WebSocket subscriptions for visible markets (subscribe to first 50)
@@ -100,6 +101,8 @@ export default function MarketsPageClient({
     if (newPage > 1) params.set('page', String(newPage));
 
     const queryString = params.toString();
+    // Mark this as a programmatic navigation so URL sync effect doesn't override state
+    isProgrammaticNavRef.current = true;
     router.push(queryString ? `/?${queryString}` : '/', { scroll: false });
   }, [router]);
 
@@ -258,10 +261,23 @@ export default function MarketsPageClient({
     switch (timeframe) {
       case 'trending':
         // Sort by trending score (volume spike + price movement + recency)
-        // Filter out: ended markets, low volume garbage
+        // Filter out: ended markets, low volume garbage, settled markets (0% or 100%)
+
+        // Find top 3 volume markets (override: keep high-volume settled markets)
+        const sortedByVolume = [...marketsToFilter].sort((a, b) => b.volume24h - a.volume24h);
+        const top3VolumeIds = new Set(sortedByVolume.slice(0, 3).map((m) => m.id));
+
         marketsToFilter = marketsToFilter
           .filter((m) => new Date(m.endsAt) > now) // Only active markets
-          .filter((m) => (m.trendingScore || 0) > 0);
+          .filter((m) => (m.trendingScore || 0) > 0)
+          // Hide settled markets (0% or 100%) unless in top 3 volume
+          .filter((m) => {
+            const isSettled = m.probability <= 0 || m.probability >= 100;
+            if (isSettled) {
+              return top3VolumeIds.has(m.id); // Override: keep top 3 volume
+            }
+            return true; // Keep active markets (1-99%)
+          });
         marketsToFilter.sort((a, b) => (b.trendingScore || 0) - (a.trendingScore || 0));
         break;
       case 'new':
@@ -332,6 +348,8 @@ export default function MarketsPageClient({
           marketsToFilter.sort((a, b) => b.probability - a.probability);
           break;
         case 'ending':
+          // Filter out ended markets, show only active ones sorted by soonest ending
+          marketsToFilter = marketsToFilter.filter((m) => new Date(m.endsAt) > now);
           marketsToFilter.sort((a, b) => new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime());
           break;
       }
@@ -344,7 +362,7 @@ export default function MarketsPageClient({
   const filteredStats = useMemo(() => {
     return {
       totalVolume24h: filteredMarkets.reduce((sum, m) => sum + m.volume24h, 0),
-      openPositions24h: filteredMarkets.reduce((sum, m) => Math.round(m.volume24h / 100), 0),
+      openPositions24h: filteredMarkets.reduce((sum, m) => sum + Math.round(m.volume24h / 100), 0),
       activeMarkets: filteredMarkets.length,
     };
   }, [filteredMarkets]);
@@ -356,9 +374,14 @@ export default function MarketsPageClient({
     return filteredMarkets.slice(startIndex, startIndex + marketsPerPage);
   }, [filteredMarkets, currentPage, marketsPerPage]);
 
-  // Sync page from URL - this is the ONLY source of truth for currentPage
-  // Runs on mount and whenever URL changes (including back/forward navigation)
+  // Sync page from URL for browser back/forward navigation
+  // Skip if this was a programmatic navigation (we already set the state)
   useEffect(() => {
+    if (isProgrammaticNavRef.current) {
+      // Reset flag after the URL update settles
+      isProgrammaticNavRef.current = false;
+      return;
+    }
     const pageFromUrl = parseInt(searchParams.get('page') || '1', 10);
     setCurrentPage(pageFromUrl);
   }, [searchParams]);

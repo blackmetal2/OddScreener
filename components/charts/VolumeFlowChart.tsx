@@ -11,6 +11,7 @@ import {
   Legend,
 } from 'recharts';
 import { formatCompactNumber } from '@/lib/utils';
+import { VolumeMetric } from '@/lib/utils/volumeAggregator';
 
 // Color palette for outcomes
 const OUTCOME_COLORS: { [key: string]: string } = {
@@ -37,6 +38,7 @@ interface VolumeFlowChartProps {
   chartData: Array<{ timestamp: number; [outcome: string]: number }>;
   outcomeNames: string[];
   loading?: boolean;
+  metric?: VolumeMetric;
 }
 
 function getOutcomeColor(name: string, index: number): string {
@@ -65,13 +67,22 @@ function CustomTooltip({
   payload,
   label,
   outcomeNames,
+  metric = 'usd',
 }: {
   active?: boolean;
   payload?: Array<{ name: string; value: number; color: string }>;
   label?: number;
   outcomeNames: string[];
+  metric?: VolumeMetric;
 }) {
   if (!active || !payload || !label) return null;
+
+  const formatValue = (value: number) => {
+    if (metric === 'shares') {
+      return formatCompactNumber(value);
+    }
+    return `$${formatCompactNumber(value)}`;
+  };
 
   return (
     <div className="bg-surface border border-border rounded-lg px-3 py-2 shadow-lg">
@@ -94,7 +105,7 @@ function CustomTooltip({
               <span className="text-xs text-text-secondary">{entry.name}</span>
             </span>
             <span className="text-xs font-mono text-text-primary">
-              ${formatCompactNumber(entry.value)}
+              {formatValue(entry.value)}
             </span>
           </div>
         ))}
@@ -107,13 +118,22 @@ function CustomTooltip({
 function CustomLegend({
   payload,
   chartData,
+  metric = 'usd',
 }: {
   payload?: Array<{ value: string; color: string }>;
   chartData: Array<{ timestamp: number; [outcome: string]: number }>;
+  metric?: VolumeMetric;
 }) {
   if (!payload || chartData.length === 0) return null;
 
   const latestData = chartData[chartData.length - 1];
+
+  const formatValue = (value: number) => {
+    if (metric === 'shares') {
+      return formatCompactNumber(value);
+    }
+    return `$${formatCompactNumber(value)}`;
+  };
 
   return (
     <div className="flex flex-wrap justify-center gap-4 mt-2">
@@ -125,7 +145,7 @@ function CustomLegend({
           />
           <span className="text-xs text-text-secondary">{entry.value}:</span>
           <span className="text-xs font-mono text-text-primary">
-            ${formatCompactNumber(latestData[entry.value] || 0)}
+            {formatValue(latestData[entry.value] || 0)}
           </span>
         </div>
       ))}
@@ -137,6 +157,7 @@ export default function VolumeFlowChart({
   chartData,
   outcomeNames,
   loading = false,
+  metric = 'usd',
 }: VolumeFlowChartProps) {
   const [isMounted, setIsMounted] = useState(false);
 
@@ -238,7 +259,7 @@ export default function VolumeFlowChart({
 
         <YAxis
           domain={yDomain}
-          tickFormatter={(v) => `$${formatCompactNumber(v)}`}
+          tickFormatter={(v) => metric === 'shares' ? formatCompactNumber(v) : `$${formatCompactNumber(v)}`}
           stroke="#4a4b55"
           tick={{ fill: '#8a8b95', fontSize: 10 }}
           axisLine={{ stroke: '#2a2b35' }}
@@ -247,7 +268,7 @@ export default function VolumeFlowChart({
         />
 
         <Tooltip
-          content={<CustomTooltip outcomeNames={outcomeNames} />}
+          content={<CustomTooltip outcomeNames={outcomeNames} metric={metric} />}
           cursor={{ stroke: '#4a4b55', strokeDasharray: '3 3' }}
         />
 
@@ -272,7 +293,7 @@ export default function VolumeFlowChart({
         })}
 
         <Legend
-          content={<CustomLegend chartData={chartData} />}
+          content={<CustomLegend chartData={chartData} metric={metric} />}
           wrapperStyle={{ paddingTop: '10px' }}
         />
       </AreaChart>

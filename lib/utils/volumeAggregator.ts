@@ -1,5 +1,8 @@
 import { MarketTrade, VolumeFlowPoint } from '@/types/market';
 
+// Metric type for volume aggregation
+export type VolumeMetric = 'usd' | 'shares';
+
 // Timeframe configuration for bucket sizes
 export interface TimeframeConfig {
   bucketMinutes: number;
@@ -18,11 +21,13 @@ export const TIMEFRAME_CONFIGS: Record<string, TimeframeConfig> = {
 
 /**
  * Aggregate trades into time buckets by outcome
+ * @param metric - 'usd' for dollar volume, 'shares' for contract count
  */
 export function aggregateTradesIntoVolume(
   trades: MarketTrade[],
   bucketMinutes: number = 5,
-  lookbackMs?: number
+  lookbackMs?: number,
+  metric: VolumeMetric = 'usd'
 ): VolumeFlowPoint[] {
   if (!trades || trades.length === 0) return [];
 
@@ -64,13 +69,14 @@ export function aggregateTradesIntoVolume(
     buckets.set(bucket, outcomeVolumes);
   }
 
-  // Aggregate trades into buckets
+  // Aggregate trades into buckets using selected metric
   sortedTrades.forEach((trade) => {
     const tradeTime = new Date(trade.timestamp).getTime();
     const bucketTime = Math.floor(tradeTime / bucketMs) * bucketMs;
     const bucket = buckets.get(bucketTime);
     if (bucket) {
-      bucket[trade.outcome] = (bucket[trade.outcome] || 0) + trade.amount;
+      const value = metric === 'shares' ? trade.shares : trade.amount;
+      bucket[trade.outcome] = (bucket[trade.outcome] || 0) + value;
     }
   });
 
@@ -197,10 +203,12 @@ function filterTopOutcomes(
 
 /**
  * Full pipeline: aggregate, smooth, and prepare chart data
+ * @param metric - 'usd' for dollar volume, 'shares' for contract count
  */
 export function processTradesForVolumeChart(
   trades: MarketTrade[],
-  timeframe: string = '24h'
+  timeframe: string = '24h',
+  metric: VolumeMetric = 'usd'
 ): {
   chartData: Array<{ timestamp: number; [outcome: string]: number }>;
   outcomeNames: string[];
@@ -213,11 +221,12 @@ export function processTradesForVolumeChart(
     outcome: normalizeOutcome(t.outcome),
   }));
 
-  // Aggregate trades into buckets
+  // Aggregate trades into buckets using selected metric
   const aggregated = aggregateTradesIntoVolume(
     normalizedTrades,
     config.bucketMinutes,
-    config.lookbackMs
+    config.lookbackMs,
+    metric
   );
 
   // Filter to top 5 outcomes by volume (to avoid chart clutter)

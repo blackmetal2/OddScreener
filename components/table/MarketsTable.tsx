@@ -190,6 +190,11 @@ export default function MarketsTable({ markets, sortColumn, sortDirection, onSor
                         HOT
                       </span>
                     )}
+                    {(market.probability <= 0 || market.probability >= 100) && (
+                      <span className="text-[10px] px-1 py-0.5 bg-text-muted/20 text-text-muted rounded shrink-0">
+                        SETTLED
+                      </span>
+                    )}
                     {market.marketType === 'multi' && (
                       <span className="text-[10px] px-1 py-0.5 bg-purple-500/20 text-purple-400 rounded shrink-0">
                         {market.outcomes?.length}

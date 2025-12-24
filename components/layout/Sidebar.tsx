@@ -140,6 +140,7 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
   const handleViewChange = (view: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('view', view);
+    params.delete('page'); // Reset pagination when changing view
     router.push(`/?${params.toString()}`);
     onClose?.(); // Close sidebar on mobile after navigation
   };
@@ -147,6 +148,7 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
   const handlePlatformChange = (platform: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('platform', platform);
+    params.delete('page'); // Reset pagination when changing platform
     router.push(`/?${params.toString()}`);
     onClose?.(); // Close sidebar on mobile after navigation
   };
