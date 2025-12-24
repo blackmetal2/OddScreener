@@ -1,8 +1,9 @@
 'use client';
 
+import { Suspense } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 
-export default function InsidersPage() {
+function InsidersContent() {
   return (
     <div className="min-h-screen bg-background">
       <Sidebar />
@@ -23,5 +24,17 @@ export default function InsidersPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function InsidersPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <InsidersContent />
+    </Suspense>
   );
 }

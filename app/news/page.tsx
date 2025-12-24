@@ -1,8 +1,9 @@
 'use client';
 
+import { Suspense } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 
-export default function NewsPage() {
+function NewsContent() {
   return (
     <div className="min-h-screen bg-background">
       <Sidebar />
@@ -23,5 +24,17 @@ export default function NewsPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function NewsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <NewsContent />
+    </Suspense>
   );
 }

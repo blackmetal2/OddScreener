@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { fetchTraderProfileData, fetchTraderPositions, fetchTraderTrades } from '@/app/actions/markets';
+import { fetchTraderProfileData, fetchTraderPositions, fetchTraderTrades, fetchTraderClosedPositions } from '@/app/actions/markets';
 import { fetchWalletTokenTransfers } from '@/lib/api/polygonscan';
 import TraderProfileClient from './TraderProfileClient';
 
@@ -23,10 +23,11 @@ function LoadingState() {
 
 async function TraderData({ address }: { address: string }) {
   // Fetch all data in parallel
-  const [profile, positions, trades, transfers] = await Promise.all([
+  const [profile, positions, closedPositions, trades, transfers] = await Promise.all([
     fetchTraderProfileData(address),
     fetchTraderPositions(address),
-    fetchTraderTrades(address, 100),
+    fetchTraderClosedPositions(address),
+    fetchTraderTrades(address, 1000),
     fetchWalletTokenTransfers(address, 1, 50),
   ]);
 
@@ -35,6 +36,7 @@ async function TraderData({ address }: { address: string }) {
       address={address}
       profile={profile}
       positions={positions}
+      closedPositions={closedPositions}
       trades={trades}
       transfers={transfers}
     />

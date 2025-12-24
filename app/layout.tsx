@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import PrivyProvider from '@/components/providers/PrivyProvider'
 
 export const metadata: Metadata = {
   title: 'OddScreener | Prediction Market Aggregator',
@@ -18,7 +19,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-background text-text-primary font-sans antialiased">
-        {children}
+        <PrivyProvider>
+          {children}
+        </PrivyProvider>
       </body>
     </html>
   )

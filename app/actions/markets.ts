@@ -254,13 +254,15 @@ export async function fetchMarketNews(marketTitle: string): Promise<NewsArticle[
 // TRADER PROFILE ACTIONS
 // ============================================
 
-import { TraderPosition, TraderTrade, TraderProfile } from '@/types/market';
+import { TraderPosition, TraderTrade, TraderProfile, TraderClosedPosition } from '@/types/market';
 import {
   fetchUserPositions as fetchPositionsAPI,
   fetchUserTrades as fetchTradesAPI,
   fetchTraderProfile as fetchProfileAPI,
+  fetchClosedPositions as fetchClosedPositionsAPI,
   PolymarketUserPosition,
   PolymarketUserTrade,
+  PolymarketClosedPosition,
 } from '@/lib/api/polymarket';
 
 /**
@@ -332,12 +334,42 @@ export async function fetchTraderPositions(address: string): Promise<TraderPosit
 /**
  * Fetch trader trades
  */
-export async function fetchTraderTrades(address: string, limit: number = 100): Promise<TraderTrade[]> {
+export async function fetchTraderTrades(address: string, limit: number = 1000): Promise<TraderTrade[]> {
   try {
     const trades = await fetchTradesAPI(address, limit);
     return trades.map(transformTrade);
   } catch (error) {
     console.error('Error in fetchTraderTrades:', error);
+    return [];
+  }
+}
+
+/**
+ * Transform Polymarket closed position to our TraderClosedPosition type
+ */
+function transformClosedPosition(pos: PolymarketClosedPosition): TraderClosedPosition {
+  return {
+    marketId: pos.conditionId,
+    marketTitle: pos.title,
+    marketSlug: pos.slug,
+    marketImage: pos.icon,
+    outcome: pos.outcome,
+    avgPrice: pos.avgPrice,
+    totalBought: pos.totalBought,
+    realizedPnl: pos.realizedPnl,
+    closedAt: new Date(pos.timestamp * 1000),
+  };
+}
+
+/**
+ * Fetch trader closed positions (for accurate P&L calculation)
+ */
+export async function fetchTraderClosedPositions(address: string): Promise<TraderClosedPosition[]> {
+  try {
+    const closedPositions = await fetchClosedPositionsAPI(address, 500);
+    return closedPositions.map(transformClosedPosition);
+  } catch (error) {
+    console.error('Error in fetchTraderClosedPositions:', error);
     return [];
   }
 }

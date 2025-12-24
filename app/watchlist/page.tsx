@@ -5,6 +5,8 @@ import Link from 'next/link';
 import Sidebar from '@/components/layout/Sidebar';
 import AlertsModal from '@/components/modals/AlertsModal';
 import { cn } from '@/lib/utils';
+import { Market, Category } from '@/types/market';
+import { StackedProgressBar } from '@/components/table/StackedProgressBar';
 
 interface WatchlistItem {
   id: string;
@@ -13,8 +15,22 @@ interface WatchlistItem {
   addedAt: string;
 }
 
+// Category colors for badges
+const categoryColors: Record<Category, { bg: string; text: string }> = {
+  politics: { bg: 'bg-blue-500/20', text: 'text-blue-400' },
+  sports: { bg: 'bg-green-500/20', text: 'text-green-400' },
+  crypto: { bg: 'bg-orange-500/20', text: 'text-orange-400' },
+  finance: { bg: 'bg-emerald-500/20', text: 'text-emerald-400' },
+  world: { bg: 'bg-purple-500/20', text: 'text-purple-400' },
+  culture: { bg: 'bg-pink-500/20', text: 'text-pink-400' },
+  tech: { bg: 'bg-cyan-500/20', text: 'text-cyan-400' },
+  science: { bg: 'bg-indigo-500/20', text: 'text-indigo-400' },
+};
+
 function WatchlistContent() {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [marketData, setMarketData] = useState<Map<string, Market>>(new Map());
+  const [loading, setLoading] = useState(true);
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
@@ -22,7 +38,33 @@ function WatchlistContent() {
     if (saved) {
       setWatchlist(JSON.parse(saved));
     }
+    setLoading(false);
   }, []);
+
+  // Fetch market data for watchlist items
+  useEffect(() => {
+    if (watchlist.length === 0) return;
+
+    const fetchMarketData = async () => {
+      try {
+        const { fetchMarkets } = await import('@/app/actions/markets');
+        const allMarkets = await fetchMarkets();
+        const marketMap = new Map<string, Market>();
+
+        allMarkets.forEach((market) => {
+          if (watchlist.some((item) => item.id === market.id)) {
+            marketMap.set(market.id, market);
+          }
+        });
+
+        setMarketData(marketMap);
+      } catch (error) {
+        console.error('Error fetching market data:', error);
+      }
+    };
+
+    fetchMarketData();
+  }, [watchlist]);
 
   const removeFromWatchlist = (id: string) => {
     const updated = watchlist.filter((item) => item.id !== id);
@@ -91,61 +133,87 @@ function WatchlistContent() {
               <thead>
                 <tr className="text-text-secondary text-xs uppercase tracking-wider border-b border-border">
                   <th className="py-3 px-4 text-left font-medium">Market</th>
-                  <th className="py-3 px-4 text-left font-medium">Platform</th>
+                  <th className="py-3 px-4 text-left font-medium">Category</th>
+                  <th className="py-3 px-4 text-right font-medium">Prob</th>
                   <th className="py-3 px-4 text-left font-medium">Added</th>
                   <th className="py-3 px-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {watchlist.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="border-b border-border/50 hover:bg-surface-hover/50 transition-colors"
-                  >
-                    <td className="py-4 px-4">
-                      <Link
-                        href={`/market/${item.platform}-${item.id}`}
-                        className="text-text-primary hover:text-accent transition-colors font-medium"
-                      >
-                        {item.name}
-                      </Link>
-                    </td>
-                    <td className="py-4 px-4">
-                      <span
-                        className={cn(
-                          'badge uppercase text-[8px] font-medium tracking-wide',
-                          'bg-polymarket-bg text-polymarket'
-                        )}
-                      >
-                        POLY
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-text-muted text-sm">
-                      {new Date(item.addedAt).toLocaleDateString()}
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <button
-                        onClick={() => removeFromWatchlist(item.id)}
-                        className="text-text-muted hover:text-negative transition-colors"
-                        title="Remove from watchlist"
-                      >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          strokeWidth={2}
+                {watchlist.map((item) => {
+                  const market = marketData.get(item.id);
+                  const category = market?.category || 'world';
+                  const colors = categoryColors[category];
+                  const probability = market?.probability ?? null;
+
+                  return (
+                    <tr
+                      key={item.id}
+                      className="border-b border-border/50 hover:bg-surface-hover/50 transition-colors"
+                    >
+                      <td className="py-4 px-4">
+                        <Link
+                          href={`/market/${item.platform}-${item.id}`}
+                          className="text-text-primary hover:text-accent transition-colors font-medium"
                         >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
-                        </svg>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                          {item.name}
+                        </Link>
+                      </td>
+                      <td className="py-4 px-4">
+                        <span
+                          className={cn(
+                            'badge uppercase text-[8px] font-medium tracking-wide',
+                            colors.bg,
+                            colors.text
+                          )}
+                        >
+                          {category}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4">
+                        {market ? (
+                          <div className="flex items-center gap-2">
+                            <StackedProgressBar market={market} />
+                            <span className={cn(
+                              'font-mono text-sm font-semibold w-10 text-right',
+                              probability !== null && probability >= 70 ? 'text-positive' :
+                              probability !== null && probability >= 40 ? 'text-text-primary' :
+                              'text-orange-400'
+                            )}>
+                              {probability !== null ? `${probability.toFixed(0)}%` : '—'}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-text-muted">—</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-4 text-text-muted text-sm">
+                        {new Date(item.addedAt).toLocaleDateString()}
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <button
+                          onClick={() => removeFromWatchlist(item.id)}
+                          className="text-text-muted hover:text-negative transition-colors"
+                          title="Remove from watchlist"
+                        >
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                            />
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

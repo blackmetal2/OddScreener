@@ -328,6 +328,16 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
         <SidebarItem
           icon={
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+            </svg>
+          }
+          label="Biggest Movers"
+          active={isHomePage && currentView === 'movers'}
+          onClick={() => handleViewChange('movers')}
+        />
+        <SidebarItem
+          icon={
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
           }
@@ -344,16 +354,6 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
           label="Top Volume"
           active={isHomePage && currentView === 'volume'}
           onClick={() => handleViewChange('volume')}
-        />
-        <SidebarItem
-          icon={
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-            </svg>
-          }
-          label="Biggest Movers"
-          active={isHomePage && currentView === 'movers'}
-          onClick={() => handleViewChange('movers')}
         />
 
         <div className="pt-4 pb-2">

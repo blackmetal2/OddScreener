@@ -535,6 +535,24 @@ export interface PolymarketUserTrade {
   pseudonym?: string;
 }
 
+export interface PolymarketClosedPosition {
+  proxyWallet: string;
+  asset: string;
+  conditionId: string;
+  avgPrice: number;
+  totalBought: number;
+  realizedPnl: number;
+  curPrice: number;
+  timestamp: number;
+  title: string;
+  slug: string;
+  icon: string;
+  eventSlug: string;
+  outcome: string;
+  outcomeIndex: number;
+  endDate: string;
+}
+
 /**
  * Fetch user positions from Polymarket Data API
  * @param address - User wallet address
@@ -570,13 +588,62 @@ export async function fetchUserPositions(
 }
 
 /**
+ * Fetch closed positions from Polymarket Data API
+ * These are positions that have been fully sold or resolved
+ * @param address - User wallet address
+ * @param limit - Maximum positions to return (default 500, max per request is 50)
+ */
+export async function fetchClosedPositions(
+  address: string,
+  limit: number = 500
+): Promise<PolymarketClosedPosition[]> {
+  try {
+    const allPositions: PolymarketClosedPosition[] = [];
+    const perPage = 50; // API max is 50
+    const pages = Math.ceil(limit / perPage);
+
+    for (let i = 0; i < pages; i++) {
+      const params = new URLSearchParams({
+        user: address.toLowerCase(),
+        limit: perPage.toString(),
+        offset: (i * perPage).toString(),
+        sortBy: 'REALIZEDPNL',
+        sortDirection: 'DESC',
+      });
+
+      const response = await fetch(`${DATA_API_BASE}/closed-positions?${params}`, {
+        next: { revalidate: 60 },
+      });
+
+      if (!response.ok) {
+        console.error(`Polymarket closed positions API error: ${response.status}`);
+        break;
+      }
+
+      const data: PolymarketClosedPosition[] = await response.json();
+      if (!data || data.length === 0) break;
+
+      allPositions.push(...data);
+
+      // Stop if we got fewer than requested (no more pages)
+      if (data.length < perPage) break;
+    }
+
+    return allPositions;
+  } catch (error) {
+    console.error('Error fetching closed positions:', error);
+    return [];
+  }
+}
+
+/**
  * Fetch user trade activity from Polymarket Data API
  * @param address - User wallet address
- * @param limit - Maximum trades to return (default 100)
+ * @param limit - Maximum trades to return (default 1000 for accurate P&L)
  */
 export async function fetchUserTrades(
   address: string,
-  limit: number = 100
+  limit: number = 1000
 ): Promise<PolymarketUserTrade[]> {
   try {
     const params = new URLSearchParams({
@@ -603,6 +670,7 @@ export async function fetchUserTrades(
 
 /**
  * Get trader profile from leaderboard data
+ * Uses timePeriod=ALL for all-time P&L and queries user directly
  * @param address - User wallet address
  */
 export async function fetchTraderProfile(
@@ -615,20 +683,21 @@ export async function fetchTraderProfile(
   profileImage?: string;
 } | null> {
   try {
-    // Fetch leaderboard to find rank
-    const response = await fetch(
-      'https://data-api.polymarket.com/v1/leaderboard?window=7d&limit=100',
+    // Fetch all-time leaderboard for this specific user
+    const userParams = new URLSearchParams({
+      timePeriod: 'ALL',
+      user: address.toLowerCase(),
+    });
+
+    const userResponse = await fetch(
+      `${DATA_API_BASE}/v1/leaderboard?${userParams}`,
       { next: { revalidate: 300 } }
     );
 
-    if (response.ok) {
-      const data = await response.json();
-      const entry = (data || []).find(
-        (e: { proxyWallet?: string }) =>
-          e.proxyWallet?.toLowerCase() === address.toLowerCase()
-      );
-
-      if (entry) {
+    if (userResponse.ok) {
+      const userData = await userResponse.json();
+      if (userData && userData.length > 0) {
+        const entry = userData[0];
         return {
           rank: parseInt(entry.rank) || 0,
           displayName: entry.userName || `${address.slice(0, 6)}...${address.slice(-4)}`,
@@ -639,7 +708,7 @@ export async function fetchTraderProfile(
       }
     }
 
-    // If not in top 100, return basic info
+    // Fallback: return basic info (user may not be on leaderboard)
     return {
       rank: 0,
       displayName: `${address.slice(0, 6)}...${address.slice(-4)}`,

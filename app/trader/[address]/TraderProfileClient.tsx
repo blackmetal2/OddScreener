@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { TraderProfile, TraderPosition, TraderTrade } from '@/types/market';
+import { TraderProfile, TraderPosition, TraderTrade, TraderClosedPosition } from '@/types/market';
 import { TokenTransfer, getPolygonscanAddressUrl, getPolygonscanTxUrl } from '@/lib/api/polygonscan';
 import { formatNumber, formatCompactNumber, cn } from '@/lib/utils';
 
@@ -10,6 +10,7 @@ interface TraderProfileClientProps {
   address: string;
   profile: TraderProfile | null;
   positions: TraderPosition[];
+  closedPositions: TraderClosedPosition[];
   trades: TraderTrade[];
   transfers: TokenTransfer[];
 }
@@ -20,6 +21,7 @@ export default function TraderProfileClient({
   address,
   profile,
   positions,
+  closedPositions,
   trades,
   transfers,
 }: TraderProfileClientProps) {
@@ -28,14 +30,37 @@ export default function TraderProfileClient({
   const [tradesPage, setTradesPage] = useState(1);
   const tradesPerPage = 20;
 
-  // Calculate stats
+  // Calculate stats from positions + closed positions (more accurate)
   const stats = useMemo(() => {
-    const totalPnl = positions.reduce((sum, p) => sum + p.overallPnl, 0);
-    const totalGains = positions.filter(p => p.overallPnl > 0).reduce((sum, p) => sum + p.overallPnl, 0);
-    const totalLosses = positions.filter(p => p.overallPnl < 0).reduce((sum, p) => sum + Math.abs(p.overallPnl), 0);
-    const winCount = positions.filter(p => p.overallPnl > 0).length;
-    const winRate = positions.length > 0 ? (winCount / positions.length) * 100 : 0;
+    // Total PnL = cashPnl from open positions + realizedPnl from closed positions
+    // cashPnl = currentValue - initialValue (unrealized P&L for open positions)
+    const openPositionsPnl = positions.reduce((sum, p) => sum + p.overallPnl, 0);
+    const closedPositionsPnl = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0);
+
+    // Use leaderboard P&L if available (most accurate), otherwise calculate
+    const totalPnl = profile?.pnl || (openPositionsPnl + closedPositionsPnl);
+
+    // Current portfolio value (open positions only)
     const totalValue = positions.reduce((sum, p) => sum + p.currentValue, 0);
+
+    // Gains from open positions with positive P&L
+    const openGains = positions.filter(p => p.overallPnl > 0).reduce((sum, p) => sum + p.overallPnl, 0);
+    // Gains from closed positions with positive realized P&L
+    const closedGains = closedPositions.filter(p => p.realizedPnl > 0).reduce((sum, p) => sum + p.realizedPnl, 0);
+    const totalGains = openGains + closedGains;
+
+    // Losses from open positions with negative P&L
+    const openLosses = positions.filter(p => p.overallPnl < 0).reduce((sum, p) => sum + Math.abs(p.overallPnl), 0);
+    // Losses from closed positions with negative realized P&L
+    const closedLosses = closedPositions.filter(p => p.realizedPnl < 0).reduce((sum, p) => sum + Math.abs(p.realizedPnl), 0);
+    const totalLosses = openLosses + closedLosses;
+
+    // Win rate: positions with positive P&L / total positions
+    const openWins = positions.filter(p => p.overallPnl > 0).length;
+    const closedWins = closedPositions.filter(p => p.realizedPnl > 0).length;
+    const totalPositionsCount = positions.length + closedPositions.length;
+    const winRate = totalPositionsCount > 0 ? ((openWins + closedWins) / totalPositionsCount) * 100 : 0;
+
     const activePositions = positions.filter(p => !p.resolved && p.currentValue > 0);
 
     const totalDeposits = transfers.filter(t => t.type === 'deposit').reduce((sum, t) => sum + t.amount, 0);
@@ -43,32 +68,43 @@ export default function TraderProfileClient({
     const netDeposits = totalDeposits - totalWithdrawals;
 
     return {
-      totalPnl: profile?.pnl || totalPnl,
+      totalPnl,
       totalGains,
       totalLosses,
       winRate,
       totalValue,
       activePositions: activePositions.length,
+      totalPositionsCount,
       totalDeposits,
       totalWithdrawals,
       netDeposits,
     };
-  }, [positions, transfers, profile]);
+  }, [positions, closedPositions, transfers, profile]);
 
-  // Top markets by PnL
+  // Top markets by PnL (combine open and closed positions)
   const topWins = useMemo(() => {
-    return [...positions]
+    const openWins = positions
       .filter(p => p.overallPnl > 0)
-      .sort((a, b) => b.overallPnl - a.overallPnl)
+      .map(p => ({ title: p.marketTitle, pnl: p.overallPnl, id: p.marketId }));
+    const closedWins = closedPositions
+      .filter(p => p.realizedPnl > 0)
+      .map(p => ({ title: p.marketTitle, pnl: p.realizedPnl, id: p.marketId }));
+    return [...openWins, ...closedWins]
+      .sort((a, b) => b.pnl - a.pnl)
       .slice(0, 5);
-  }, [positions]);
+  }, [positions, closedPositions]);
 
   const topLosses = useMemo(() => {
-    return [...positions]
+    const openLosses = positions
       .filter(p => p.overallPnl < 0)
-      .sort((a, b) => a.overallPnl - b.overallPnl)
+      .map(p => ({ title: p.marketTitle, pnl: p.overallPnl, id: p.marketId }));
+    const closedLosses = closedPositions
+      .filter(p => p.realizedPnl < 0)
+      .map(p => ({ title: p.marketTitle, pnl: p.realizedPnl, id: p.marketId }));
+    return [...openLosses, ...closedLosses]
+      .sort((a, b) => a.pnl - b.pnl)
       .slice(0, 5);
-  }, [positions]);
+  }, [positions, closedPositions]);
 
   // Paginated trades
   const paginatedTrades = useMemo(() => {
@@ -176,12 +212,12 @@ export default function TraderProfileClient({
               {topWins.length > 0 ? (
                 <div className="space-y-2">
                   {topWins.map((pos, i) => (
-                    <div key={pos.marketId + pos.outcome} className="flex items-center justify-between py-2">
+                    <div key={pos.id + i} className="flex items-center justify-between py-2">
                       <div className="flex items-center gap-3">
                         <span className="text-xs text-text-muted w-5">#{i + 1}</span>
-                        <span className="text-sm text-text-primary truncate max-w-[200px]">{pos.marketTitle}</span>
+                        <span className="text-sm text-text-primary truncate max-w-[200px]">{pos.title}</span>
                       </div>
-                      <span className="text-sm font-mono text-positive">+{formatNumber(pos.overallPnl)}</span>
+                      <span className="text-sm font-mono text-positive">+{formatNumber(pos.pnl)}</span>
                     </div>
                   ))}
                 </div>
@@ -196,12 +232,12 @@ export default function TraderProfileClient({
               {topLosses.length > 0 ? (
                 <div className="space-y-2">
                   {topLosses.map((pos, i) => (
-                    <div key={pos.marketId + pos.outcome} className="flex items-center justify-between py-2">
+                    <div key={pos.id + i} className="flex items-center justify-between py-2">
                       <div className="flex items-center gap-3">
                         <span className="text-xs text-text-muted w-5">#{i + 1}</span>
-                        <span className="text-sm text-text-primary truncate max-w-[200px]">{pos.marketTitle}</span>
+                        <span className="text-sm text-text-primary truncate max-w-[200px]">{pos.title}</span>
                       </div>
-                      <span className="text-sm font-mono text-negative">{formatNumber(pos.overallPnl)}</span>
+                      <span className="text-sm font-mono text-negative">{formatNumber(pos.pnl)}</span>
                     </div>
                   ))}
                 </div>

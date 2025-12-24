@@ -296,18 +296,29 @@ export default function MarketsPageClient({
         marketsToFilter.sort((a, b) => b.volume24h - a.volume24h);
         break;
       case 'movers':
-        // Sort by absolute 24h change
-        marketsToFilter.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
-        break;
       case '1h':
-        marketsToFilter.sort((a, b) => Math.abs(b.change1h) - Math.abs(a.change1h));
-        break;
       case '6h':
-        marketsToFilter.sort((a, b) => Math.abs(b.change6h) - Math.abs(a.change6h));
+      case '24h': {
+        // Biggest Movers filtering: exclude settled/low-liquidity markets
+        const MOVERS_MIN_VOLUME = 1000;
+
+        marketsToFilter = marketsToFilter
+          // Exclude ended/closed markets
+          .filter((m) => new Date(m.endsAt) > now)
+          // Probability threshold: only active range (2% - 98%)
+          .filter((m) => m.probability >= 2 && m.probability <= 98)
+          // Liquidity floor: minimum $1K volume
+          .filter((m) => m.volume24h >= MOVERS_MIN_VOLUME);
+
+        // Sort by absolute change based on selected timeframe
+        const getChange = (m: Market) => {
+          if (timeframe === '1h') return m.change1h;
+          if (timeframe === '6h') return m.change6h;
+          return m.change24h; // movers and 24h use 24h change
+        };
+        marketsToFilter.sort((a, b) => Math.abs(getChange(b)) - Math.abs(getChange(a)));
         break;
-      case '24h':
-        marketsToFilter.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
-        break;
+      }
       default:
         break;
     }

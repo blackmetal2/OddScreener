@@ -168,6 +168,18 @@ export interface TraderPosition {
   resolved: boolean;
 }
 
+export interface TraderClosedPosition {
+  marketId: string;
+  marketTitle: string;
+  marketSlug: string;
+  marketImage?: string;
+  outcome: string;
+  avgPrice: number;
+  totalBought: number;
+  realizedPnl: number;
+  closedAt: Date;
+}
+
 export interface TraderTrade {
   id: string;
   timestamp: Date;
