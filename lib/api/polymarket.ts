@@ -1,0 +1,741 @@
+import {
+  PolymarketEvent,
+  PolymarketMarket,
+  PolymarketMarketEvent,
+  PolymarketPriceHistoryResponse,
+  PolymarketPricePoint,
+  PolymarketTokenHolders,
+} from './types';
+
+const GAMMA_API_BASE = 'https://gamma-api.polymarket.com';
+const CLOB_API_BASE = 'https://clob.polymarket.com';
+const DATA_API_BASE = 'https://data-api.polymarket.com';
+
+// Cache duration for Next.js fetch
+const CACHE_DURATION = 60; // 60 seconds
+
+// Spam tag IDs to exclude (from competitor analysis)
+const EXCLUDED_TAG_IDS = ['1312', '1', '100639', '102127'];
+
+// Minimum volume threshold to filter garbage markets
+const MIN_VOLUME_THRESHOLD = 1000; // $1,000 minimum 24h volume
+
+/**
+ * Fetch all active events with their markets from Polymarket
+ */
+export async function fetchPolymarketEvents(
+  limit: number = 100,
+  offset: number = 0
+): Promise<PolymarketEvent[]> {
+  const params = new URLSearchParams({
+    closed: 'false',
+    limit: limit.toString(),
+    offset: offset.toString(),
+    order: 'volume24hr',
+    ascending: 'false',
+  });
+
+  const response = await fetch(`${GAMMA_API_BASE}/events?${params}`, {
+    next: { revalidate: CACHE_DURATION },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Polymarket API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data as PolymarketEvent[];
+}
+
+/**
+ * Fetch all active markets from Polymarket with pagination and filtering
+ * @param limit - Max markets per page (max 500)
+ * @param offset - Pagination offset
+ * @param excludeTags - Whether to exclude spam tags
+ */
+export async function fetchPolymarketMarkets(
+  limit: number = 100,
+  offset: number = 0,
+  excludeTags: boolean = true
+): Promise<PolymarketMarket[]> {
+  const params = new URLSearchParams({
+    closed: 'false',
+    limit: Math.min(limit, 500).toString(), // API max is 500
+    offset: offset.toString(),
+    order: 'volume24hr',
+    ascending: 'false',
+  });
+
+  // Add tag exclusions for spam filtering
+  if (excludeTags) {
+    EXCLUDED_TAG_IDS.forEach(tagId => {
+      params.append('exclude_tag_id', tagId);
+    });
+  }
+
+  const response = await fetch(`${GAMMA_API_BASE}/markets?${params}`, {
+    next: { revalidate: CACHE_DURATION },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Polymarket API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data as PolymarketMarket[];
+}
+
+/**
+ * Fetch markets with pagination - fetches multiple pages to get more markets
+ * @param totalLimit - Total markets to fetch (will paginate automatically)
+ * @param minVolume - Minimum 24h volume filter (client-side)
+ */
+export async function fetchPolymarketMarketsWithPagination(
+  totalLimit: number = 2000,
+  minVolume: number = MIN_VOLUME_THRESHOLD
+): Promise<PolymarketMarket[]> {
+  const pageSize = 500;
+  const pages = Math.ceil(totalLimit / pageSize);
+  const allMarkets: PolymarketMarket[] = [];
+
+  // Fetch pages in parallel (max 4 concurrent to avoid rate limits)
+  const fetchPromises: Promise<PolymarketMarket[]>[] = [];
+  for (let i = 0; i < pages; i++) {
+    fetchPromises.push(
+      fetchPolymarketMarkets(pageSize, i * pageSize, true).catch((e) => {
+        console.error(`Failed to fetch page ${i}:`, e);
+        return [];
+      })
+    );
+  }
+
+  const results = await Promise.all(fetchPromises);
+  results.forEach((markets) => allMarkets.push(...markets));
+
+  // Filter by minimum volume to exclude garbage markets
+  const filteredMarkets = allMarkets.filter(
+    (m) => (m.volume24hrNum || m.volume24hr || 0) >= minVolume
+  );
+
+  console.log(`[Polymarket] Fetched ${allMarkets.length} markets, ${filteredMarkets.length} after volume filter (min $${minVolume})`);
+
+  return filteredMarkets;
+}
+
+/**
+ * Fetch a specific event by slug
+ */
+export async function fetchPolymarketEventBySlug(
+  slug: string
+): Promise<PolymarketEvent | null> {
+  const response = await fetch(`${GAMMA_API_BASE}/events/slug/${slug}`, {
+    next: { revalidate: 30 },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Polymarket API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch a specific market by ID
+ * Uses the list endpoint with ID filter to include events data
+ */
+export async function fetchPolymarketMarketById(
+  marketId: string
+): Promise<PolymarketMarket | null> {
+  // Use list endpoint with ID filter to get events data (single market endpoint doesn't include it)
+  const response = await fetch(`${GAMMA_API_BASE}/markets?id=${marketId}`, {
+    next: { revalidate: 30 },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Polymarket API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data && data.length > 0 ? data[0] : null;
+}
+
+/**
+ * Fetch price history for a specific token
+ * @param tokenId - The CLOB token ID (from clobTokenIds)
+ * @param interval - Time interval: '1h', '6h', '1d', '1w', '1m', 'max'
+ */
+export async function fetchPolymarketPriceHistory(
+  tokenId: string,
+  interval: '1h' | '6h' | '1d' | '1w' | '1m' | 'max' = '1d'
+): Promise<PolymarketPricePoint[]> {
+  const params = new URLSearchParams({
+    market: tokenId,
+    interval: interval,
+  });
+
+  const response = await fetch(`${CLOB_API_BASE}/prices-history?${params}`, {
+    next: { revalidate: 300 }, // 5 min cache for price history
+  });
+
+  if (!response.ok) {
+    console.error(`Polymarket price history error: ${response.status}`);
+    return [];
+  }
+
+  const data: PolymarketPriceHistoryResponse = await response.json();
+  return data.history || [];
+}
+
+/**
+ * Parse the outcomes from a Polymarket market
+ */
+export function parsePolymarketOutcomes(market: PolymarketMarket): {
+  outcomes: string[];
+  prices: number[];
+} {
+  try {
+    const outcomes = JSON.parse(market.outcomes || '["Yes", "No"]');
+    const prices = JSON.parse(market.outcomePrices || '[0.5, 0.5]').map(
+      (p: string | number) => (typeof p === 'string' ? parseFloat(p) : p)
+    );
+    return { outcomes, prices };
+  } catch {
+    return { outcomes: ['Yes', 'No'], prices: [0.5, 0.5] };
+  }
+}
+
+/**
+ * Get the CLOB token IDs for a market
+ */
+export function getPolymarketTokenIds(market: PolymarketMarket): string[] {
+  try {
+    const tokenIds = JSON.parse(market.clobTokenIds || '[]');
+    if (tokenIds.length === 0) {
+      console.warn(`[Polymarket] Empty tokenIds for market ${market.id} (${market.question?.slice(0, 50)}...)`);
+    }
+    return tokenIds;
+  } catch (e) {
+    console.error(`[Polymarket] Failed to parse clobTokenIds for market ${market.id}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Get the event slug for a market (used for constructing Polymarket URLs)
+ * The market slug is NOT valid for URLs - we need the parent event's slug
+ */
+export function getPolymarketEventSlug(market: PolymarketMarket): string {
+  try {
+    // Parse events if it's a string
+    const events: PolymarketMarketEvent[] =
+      typeof market.events === 'string'
+        ? JSON.parse(market.events || '[]')
+        : market.events || [];
+
+    if (events.length > 0 && events[0].slug) {
+      return events[0].slug;
+    }
+
+    // Fallback: try to derive event slug from market slug by removing trailing number suffix
+    // e.g., "will-trump-release-the-epstein-files-by-december-19-771" -> strip "-771"
+    const marketSlug = market.slug || '';
+    const slugWithoutSuffix = marketSlug.replace(/-\d+$/, '');
+    if (slugWithoutSuffix && slugWithoutSuffix !== marketSlug) {
+      console.warn(`[Polymarket] Using derived event slug for market ${market.id}: ${slugWithoutSuffix}`);
+      return slugWithoutSuffix;
+    }
+
+    // Last fallback: use market slug as-is
+    return marketSlug;
+  } catch (e) {
+    console.error(`[Polymarket] Failed to get event slug for market ${market.id}:`, e);
+    return market.slug || '';
+  }
+}
+
+/**
+ * Fetch price history for ALL outcomes of a multi-outcome market
+ * Returns merged timeline with all outcome probabilities at each timestamp
+ */
+export async function fetchAllOutcomesPriceHistory(
+  tokenIds: string[],
+  outcomeNames: string[],
+  interval: '1h' | '6h' | '1d' | '1w' | '1m' | 'max' = '1d'
+): Promise<{ timestamp: Date; outcomes: { [name: string]: number } }[]> {
+  console.log(`[Polymarket] fetchAllOutcomesPriceHistory: ${tokenIds.length} tokenIds, ${outcomeNames.length} outcomes`);
+
+  if (tokenIds.length === 0) {
+    console.warn('[Polymarket] No tokenIds for multi-outcome price history');
+    return [];
+  }
+
+  if (outcomeNames.length === 0) {
+    console.warn('[Polymarket] No outcomeNames for multi-outcome price history');
+    return [];
+  }
+
+  // Use minimum length if mismatched (fetch what we can)
+  const count = Math.min(tokenIds.length, outcomeNames.length);
+  if (tokenIds.length !== outcomeNames.length) {
+    console.warn(`[Polymarket] Mismatch: ${tokenIds.length} tokenIds vs ${outcomeNames.length} outcomes. Using first ${count}.`);
+  }
+
+  const usedTokenIds = tokenIds.slice(0, count);
+  const usedOutcomeNames = outcomeNames.slice(0, count);
+
+  // Fetch price history for all tokens in parallel
+  const histories = await Promise.all(
+    usedTokenIds.map((tokenId) => fetchPolymarketPriceHistory(tokenId, interval))
+  );
+
+  // Build a map of timestamp -> { outcomeName: probability }
+  const timeMap = new Map<number, { [name: string]: number }>();
+
+  histories.forEach((history, idx) => {
+    const outcomeName = usedOutcomeNames[idx];
+    for (const point of history) {
+      const ts = point.t;
+      if (!timeMap.has(ts)) {
+        timeMap.set(ts, {});
+      }
+      timeMap.get(ts)![outcomeName] = point.p * 100; // Convert to percentage
+    }
+  });
+
+  // Convert to sorted array
+  const sortedTimestamps = Array.from(timeMap.keys()).sort((a, b) => a - b);
+
+  // Fill missing values with previous known value
+  const result: { timestamp: Date; outcomes: { [name: string]: number } }[] = [];
+  const lastKnown: { [name: string]: number } = {};
+
+  // Initialize with 0 for all outcomes
+  usedOutcomeNames.forEach((name) => {
+    lastKnown[name] = 0;
+  });
+
+  for (const ts of sortedTimestamps) {
+    const outcomes = timeMap.get(ts)!;
+
+    // Update lastKnown with new values
+    for (const name of usedOutcomeNames) {
+      if (outcomes[name] !== undefined) {
+        lastKnown[name] = outcomes[name];
+      }
+    }
+
+    // Create point with all outcomes (using lastKnown for missing)
+    result.push({
+      timestamp: new Date(ts * 1000),
+      outcomes: { ...lastKnown },
+    });
+  }
+
+  console.log(`[Polymarket] Returning ${result.length} price history points for ${count} outcomes`);
+  return result;
+}
+
+/**
+ * Map Polymarket tags to our category system
+ * Falls back to question/title analysis if tags don't match
+ */
+export function mapPolymarketCategory(
+  tags: { label: string; slug: string }[],
+  question?: string
+): string {
+  const tagLabels = tags.map((t) => t.label.toLowerCase());
+  const tagSlugs = tags.map((t) => t.slug.toLowerCase());
+
+  // 1. Try tag-based matching first
+  if (
+    tagLabels.some((t) => t.includes('politic')) ||
+    tagSlugs.includes('politics')
+  )
+    return 'politics';
+  if (tagLabels.some((t) => t.includes('sport')) || tagSlugs.includes('sports'))
+    return 'sports';
+  if (
+    tagLabels.some((t) => t.includes('crypto') || t.includes('bitcoin')) ||
+    tagSlugs.includes('crypto')
+  )
+    return 'crypto';
+  if (
+    tagLabels.some((t) => t.includes('finance') || t.includes('econ')) ||
+    tagSlugs.includes('finance')
+  )
+    return 'finance';
+  if (
+    tagLabels.some((t) => t.includes('tech')) ||
+    tagSlugs.includes('technology')
+  )
+    return 'tech';
+  if (
+    tagLabels.some((t) => t.includes('science')) ||
+    tagSlugs.includes('science')
+  )
+    return 'science';
+  if (
+    tagLabels.some((t) => t.includes('culture') || t.includes('entertainment'))
+  )
+    return 'culture';
+
+  // 2. Fallback: analyze question/title for keywords
+  if (question) {
+    const q = question.toLowerCase();
+
+    // Politics - elections, government, politicians
+    if (/trump|biden|harris|election|president|congress|senate|vote|democrat|republican|governor|mayor|political|impeach|cabinet/.test(q))
+      return 'politics';
+
+    // Crypto - cryptocurrencies
+    if (/bitcoin|btc|eth|ethereum|crypto|solana|xrp|dogecoin|coinbase|binance|defi|nft/.test(q))
+      return 'crypto';
+
+    // Finance - economy, markets
+    if (/fed |federal reserve|rate cut|rate hike|stock|economy|gdp|inflation|recession|s&p|nasdaq|dow|treasury|yield|unemployment/.test(q))
+      return 'finance';
+
+    // Sports - games, matches, championships
+    if (/nfl|nba|mlb|nhl|ufc|boxing|fight|game|match|championship|super bowl|world series|playoff|mvp|draft|trade/.test(q))
+      return 'sports';
+
+    // Culture - entertainment, celebrities
+    if (/movie|oscar|grammy|emmy|celebrity|hollywood|netflix|album|concert|tour|award show|kardashian|taylor swift/.test(q))
+      return 'culture';
+
+    // Tech - technology companies, AI
+    if (/\bai\b|artificial intelligence|openai|chatgpt|apple|google|microsoft|meta|amazon|tesla|spacex|twitter|tiktok/.test(q))
+      return 'tech';
+
+    // Science - climate, space, research
+    if (/climate|nasa|space|spacex|rocket|mars|moon|science|research|vaccine|covid|pandemic|hurricane|earthquake|weather/.test(q))
+      return 'science';
+  }
+
+  return 'world'; // true default for international/general news
+}
+
+/**
+ * Fetch top holders for a market's tokens
+ * @param conditionId - The market condition ID (0x-prefixed hex string)
+ * @param limit - Maximum number of holders to return (default 20, max 20)
+ */
+export async function fetchPolymarketHolders(
+  conditionId: string,
+  limit: number = 20
+): Promise<PolymarketTokenHolders[]> {
+  try {
+    const params = new URLSearchParams({
+      market: conditionId,
+      limit: Math.min(limit, 20).toString(),
+    });
+
+    const response = await fetch(`${DATA_API_BASE}/holders?${params}`, {
+      next: { revalidate: 300 }, // 5 min cache
+    });
+
+    if (!response.ok) {
+      console.error(`Polymarket holders API error: ${response.status}`);
+      return [];
+    }
+
+    const data: PolymarketTokenHolders[] = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching Polymarket holders:', error);
+    return [];
+  }
+}
+
+/**
+ * Calculate price change from history
+ */
+export function calculatePriceChange(
+  history: PolymarketPricePoint[],
+  hoursAgo: number
+): number {
+  if (!history.length) return 0;
+
+  const now = Date.now() / 1000;
+  const targetTime = now - hoursAgo * 3600;
+
+  // Get current price (last in history)
+  const currentPrice = history[history.length - 1]?.p ?? 0;
+
+  // Find price at target time
+  let pastPrice = currentPrice;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].t <= targetTime) {
+      pastPrice = history[i].p;
+      break;
+    }
+  }
+
+  // If no historical data, use first available
+  if (pastPrice === currentPrice && history.length > 1) {
+    pastPrice = history[0].p;
+  }
+
+  // Calculate change in percentage points (e.g., 0.55 - 0.50 = 5%)
+  return (currentPrice - pastPrice) * 100;
+}
+
+// ============================================
+// USER/TRADER API ENDPOINTS
+// ============================================
+
+export interface PolymarketUserPosition {
+  proxyWallet: string;
+  asset: string;
+  conditionId: string;
+  size: number;
+  avgPrice: number;
+  initialValue: number;
+  currentValue: number;
+  cashPnl: number;
+  percentPnl: number;
+  totalBought: number;
+  totalSold: number;
+  realizedPnl: number;
+  curPrice: number;
+  redeemable: boolean;
+  mergeable: boolean;
+  outcome: string;
+  outcomeIndex: number;
+  oppositeOutcome: string;
+  oppositeAsset: string;
+  title: string;
+  slug: string;
+  icon: string;
+  eventSlug: string;
+  endDate: string;
+  negRisk: boolean;
+}
+
+export interface PolymarketUserTrade {
+  proxyWallet: string;
+  timestamp: number;
+  conditionId: string;
+  type: string;
+  side: 'BUY' | 'SELL';
+  outcome: string;
+  outcomeIndex: number;
+  title: string;
+  slug: string;
+  icon: string;
+  transactionHash: string;
+  price: number;
+  size: number;
+  usdcSize: number;
+  asset: string;
+  eventSlug: string;
+  name?: string;
+  pseudonym?: string;
+}
+
+/**
+ * Fetch user positions from Polymarket Data API
+ * @param address - User wallet address
+ * @param limit - Maximum positions to return (default 100)
+ */
+export async function fetchUserPositions(
+  address: string,
+  limit: number = 100
+): Promise<PolymarketUserPosition[]> {
+  try {
+    const params = new URLSearchParams({
+      user: address.toLowerCase(),
+      limit: limit.toString(),
+      sortBy: 'CURRENT_VALUE',
+      sortDirection: 'DESC',
+    });
+
+    const response = await fetch(`${DATA_API_BASE}/positions?${params}`, {
+      next: { revalidate: 60 }, // 1 min cache
+    });
+
+    if (!response.ok) {
+      console.error(`Polymarket positions API error: ${response.status}`);
+      return [];
+    }
+
+    const data: PolymarketUserPosition[] = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching user positions:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetch user trade activity from Polymarket Data API
+ * @param address - User wallet address
+ * @param limit - Maximum trades to return (default 100)
+ */
+export async function fetchUserTrades(
+  address: string,
+  limit: number = 100
+): Promise<PolymarketUserTrade[]> {
+  try {
+    const params = new URLSearchParams({
+      user: address.toLowerCase(),
+      limit: limit.toString(),
+    });
+
+    const response = await fetch(`${DATA_API_BASE}/activity?${params}`, {
+      next: { revalidate: 60 }, // 1 min cache
+    });
+
+    if (!response.ok) {
+      console.error(`Polymarket activity API error: ${response.status}`);
+      return [];
+    }
+
+    const data: PolymarketUserTrade[] = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching user trades:', error);
+    return [];
+  }
+}
+
+/**
+ * Get trader profile from leaderboard data
+ * @param address - User wallet address
+ */
+export async function fetchTraderProfile(
+  address: string
+): Promise<{
+  rank: number;
+  displayName: string;
+  pnl: number;
+  volume: number;
+  profileImage?: string;
+} | null> {
+  try {
+    // Fetch leaderboard to find rank
+    const response = await fetch(
+      'https://data-api.polymarket.com/v1/leaderboard?window=7d&limit=100',
+      { next: { revalidate: 300 } }
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      const entry = (data || []).find(
+        (e: { proxyWallet?: string }) =>
+          e.proxyWallet?.toLowerCase() === address.toLowerCase()
+      );
+
+      if (entry) {
+        return {
+          rank: parseInt(entry.rank) || 0,
+          displayName: entry.userName || `${address.slice(0, 6)}...${address.slice(-4)}`,
+          pnl: entry.pnl || 0,
+          volume: entry.vol || 0,
+          profileImage: entry.profileImage,
+        };
+      }
+    }
+
+    // If not in top 100, return basic info
+    return {
+      rank: 0,
+      displayName: `${address.slice(0, 6)}...${address.slice(-4)}`,
+      pnl: 0,
+      volume: 0,
+    };
+  } catch (error) {
+    console.error('Error fetching trader profile:', error);
+    return null;
+  }
+}
+
+// ============================================
+// MARKET TRADES API
+// ============================================
+
+export interface PolymarketMarketTrade {
+  proxyWallet: string;
+  side: 'BUY' | 'SELL';
+  asset: string;
+  conditionId: string;
+  size: number;
+  price: number;
+  timestamp: number;
+  title: string;
+  slug: string;
+  outcome: string;
+  outcomeIndex: number;
+  transactionHash: string;
+  name?: string;
+  pseudonym?: string;
+}
+
+/**
+ * Fetch recent trades for a specific market
+ * @param slug - Market slug identifier
+ * @param limit - Maximum trades to return (default 50, max 1000)
+ */
+export async function fetchMarketTrades(
+  slug: string,
+  limit: number = 50
+): Promise<PolymarketMarketTrade[]> {
+  try {
+    const params = new URLSearchParams({
+      slug: slug,
+      limit: Math.min(limit, 1000).toString(),
+    });
+
+    const response = await fetch(`${DATA_API_BASE}/trades?${params}`, {
+      next: { revalidate: 30 }, // 30 second cache for fresher trades
+    });
+
+    if (!response.ok) {
+      console.error(`Polymarket trades API error: ${response.status}`);
+      return [];
+    }
+
+    const data: PolymarketMarketTrade[] = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching market trades:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetch recent trades by condition ID
+ * Uses the 'market' parameter (not 'conditionId') per Polymarket Data API docs
+ * @param conditionId - Market condition ID (hex string)
+ * @param limit - Maximum trades to return (default 50, max 10000)
+ */
+export async function fetchMarketTradesByConditionId(
+  conditionId: string,
+  limit: number = 50
+): Promise<PolymarketMarketTrade[]> {
+  try {
+    // IMPORTANT: Use 'market' parameter, NOT 'conditionId'
+    // Per docs: https://docs.polymarket.com/api-reference/core/get-trades-for-a-user-or-markets
+    const params = new URLSearchParams({
+      market: conditionId,
+      limit: Math.min(limit, 10000).toString(),
+    });
+
+    const response = await fetch(`${DATA_API_BASE}/trades?${params}`, {
+      next: { revalidate: 30 },
+    });
+
+    if (!response.ok) {
+      console.error(`Polymarket trades API error: ${response.status}`);
+      return [];
+    }
+
+    const data: PolymarketMarketTrade[] = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching market trades:', error);
+    return [];
+  }
+}

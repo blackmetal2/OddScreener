@@ -1,0 +1,182 @@
+# OddScreener QA Testing Report
+Date: 2025-12-23
+Tester: Claude (Playwright MCP - Manual Testing)
+
+## Test Summary
+- Homepage: PASSED
+- Filters (Timeframe, Platform, Category): PASSED
+- Search: PASSED (working!)
+- Market Detail Page: ISSUES FOUND
+- Watchlist: PASSED
+- Alerts Modal: PASSED
+- Mobile Responsiveness: PASSED (major improvement from previous audit)
+- Top Positions: PASSED
+
+---
+
+## CRITICAL ISSUES
+
+[SEVERITY: CRITICAL]
+Issue: Chart Y-axis labels display floating point precision errors
+Location: Market detail page - Probability History chart
+Expected: Y-axis should show clean percentages like "94%", "96%", "98%", "100%"
+Actual: Y-axis shows "0001%" repeated multiple times, and accessibility tree shows "94.05000000000001%"
+Impact: Makes the chart difficult to read and looks unprofessional
+Fix: Round percentage values before display using toFixed(2) or Math.round()
+---
+
+[SEVERITY: CRITICAL]
+Issue: Console warnings about chart dimensions
+Location: Market detail page (appears twice per page load)
+Expected: No console warnings
+Actual: "The width(-1) and height(-1) of chart should be greater than 0, please check the style of the container"
+Impact: Indicates potential rendering issues with Recharts ResponsiveContainer
+Fix: Ensure chart container has explicit dimensions before Recharts renders
+---
+
+## HIGH PRIORITY ISSUES
+
+[SEVERITY: HIGH]
+Issue: "$0 traders" displays incorrectly with dollar sign
+Location: Market detail page header
+Expected: "0 traders" or "N/A traders"
+Actual: "$0 traders"
+Impact: Confusing UX - traders count should not have currency symbol
+Fix: Remove $ prefix from traders count display
+---
+
+[SEVERITY: HIGH]
+Issue: "Unique Traders: $0" shows dollar sign for count
+Location: Market detail page - Market Stats sidebar
+Expected: "Unique Traders: 0" or "N/A"
+Actual: "Unique Traders: $0"
+Impact: Same issue as above - count should not have currency symbol
+Fix: Remove $ prefix from unique traders display
+---
+
+[SEVERITY: HIGH]
+Issue: TRADES stat shows "N/A" on stats bar
+Location: Homepage stats bar (top)
+Expected: Actual trade count or meaningful value
+Actual: "TRADES: N/A"
+Impact: Important metric appears unavailable
+Fix: Either fetch real trade data or remove/hide this metric
+---
+
+[SEVERITY: HIGH]
+Issue: Social links point to "#" (dead links)
+Location: Sidebar footer - Discord, Twitter, Telegram icons
+Expected: Links to actual social media pages or hidden if not available
+Actual: All links point to "#"
+Impact: Dead links look unprofessional
+Fix: Add real social links or remove the icons until available
+---
+
+## MEDIUM PRIORITY ISSUES
+
+[SEVERITY: MEDIUM]
+Issue: Trade data not available for Polymarket
+Location: Market detail page - Trades tab
+Expected: Recent trade history
+Actual: "Trade data not available - Polymarket trades require authentication to access"
+Impact: Users cannot see trading activity
+Fix: Implement authenticated API access or clearly communicate this limitation
+---
+
+[SEVERITY: MEDIUM]
+Issue: News tab appears to be placeholder
+Location: Market detail page - News tab
+Expected: Related news articles
+Actual: Not tested but likely placeholder based on code review
+Impact: Feature appears incomplete
+Fix: Implement news integration or remove tab until ready
+---
+
+[SEVERITY: MEDIUM]
+Issue: URL doesn't update for platform/category filters
+Location: Homepage filter bar
+Expected: URL should include platform and category params (e.g., ?view=trending&platform=polymarket&category=crypto)
+Actual: URL only updates for view parameter
+Impact: Cannot share or bookmark filtered views
+Fix: Add platform and category to URL query params
+---
+
+[SEVERITY: MEDIUM]
+Issue: Some markets show "--" for end date
+Location: Markets table - Ends column
+Expected: Consistent date format or "No end date"
+Actual: Shows "--" which is unclear
+Impact: Confusing UX
+Fix: Show "Ongoing" or "No end date" instead of "--"
+---
+
+## LOW PRIORITY ISSUES
+
+[SEVERITY: LOW]
+Issue: Chart timeframe buttons could be more prominent
+Location: Market detail page - chart timeframe selector
+Expected: Clear active state indication
+Actual: Active state is subtle
+Impact: Minor UX issue
+Fix: Add stronger visual indication for selected timeframe
+---
+
+[SEVERITY: LOW]
+Issue: Settings button has no functionality
+Location: Sidebar - Settings icon
+Expected: Opens settings modal or page
+Actual: No visible action (not tested extensively)
+Impact: Feature may be incomplete
+Fix: Implement settings or remove button
+---
+
+## FEATURES WORKING WELL
+
+1. Search functionality - Real-time filtering works great (tested with "bitcoin")
+2. Platform filters (All/Polymarket/Kalshi) - Working correctly
+3. Category filters - Working correctly
+4. Timeframe filters (Trending, 1H, 6H, 24H, etc.) - Working correctly
+5. Market detail page - Overall layout and data display
+6. Top Positions tab - Shows real holder data from Polymarket
+7. Watchlist - Add/remove markets, persists in localStorage
+8. Alerts modal - Opens/closes correctly, localStorage persistence
+9. Mobile responsiveness - Hamburger menu, responsive table (MAJOR IMPROVEMENT)
+10. Sorting dropdown - Works correctly
+11. Market navigation - Click to view details, back button works
+
+## PERFORMANCE NOTES
+
+- Page loads quickly
+- No significant lag on filter changes
+- Real-time data updates shown ("Updated just now")
+- 200+ markets displayed smoothly (500+ for Polymarket only)
+
+## RECOMMENDATIONS
+
+### Immediate (Sprint 1)
+1. Fix Y-axis floating point precision bug
+2. Fix chart dimension warnings
+3. Fix "$0 traders" display formatting
+
+### Short-term (Sprint 2)
+1. Add platform/category to URL params
+2. Fix social links or remove them
+3. Improve "N/A" displays with better messaging
+
+### Future
+1. Implement authenticated Polymarket API for trades
+2. Add news integration
+3. Implement settings functionality
+
+---
+
+## Screenshots Captured
+1. 01-homepage.png - Initial homepage load
+2. 02-polymarket-filter.png - Polymarket platform filter (500 markets, $69.3M volume)
+3. 03-market-detail.png - Market detail page with chart
+4. 04-mobile-detail.png - Mobile market detail view
+5. 05-mobile-homepage.png - Mobile homepage (responsive)
+6. 06-search-test.png - Search functionality working (bitcoin search)
+
+---
+END OF REPORT
