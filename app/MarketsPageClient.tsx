@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar, { HamburgerIcon } from '@/components/layout/Sidebar';
 import StatsBar from '@/components/layout/StatsBar';
-import FilterBar from '@/components/filters/FilterBar';
+import FilterBar, { RankBy } from '@/components/filters/FilterBar';
 import FilterModal, { AdvancedFilters, defaultFilters } from '@/components/filters/FilterModal';
 import MarketsTable, { SortColumn, SortDirection } from '@/components/table/MarketsTable';
 import AlertsModal from '@/components/modals/AlertsModal';
@@ -37,6 +37,7 @@ export default function MarketsPageClient({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn | undefined>(undefined);
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [rankBy, setRankBy] = useState<RankBy>('volume');
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(defaultFilters);
   const [markets, setMarkets] = useState<Market[]>(initialMarkets);
@@ -127,6 +128,12 @@ export default function MarketsPageClient({
     setCurrentPage(1); // Reset pagination when changing view
     updateUrl(platform, category, newTimeframe);
   }, [platform, category, updateUrl]);
+
+  const handleRankByChange = useCallback((newRankBy: RankBy) => {
+    setRankBy(newRankBy);
+    setSortColumn(undefined); // Clear table column sort when using Rank By
+    setCurrentPage(1);
+  }, []);
 
   // Handle column sort
   const handleSort = (column: SortColumn) => {
@@ -289,7 +296,7 @@ export default function MarketsPageClient({
         break;
     }
 
-    // Apply column-based sorting if active (overrides view sorting)
+    // Apply column-based sorting if active (overrides view sorting and rankBy)
     if (sortColumn) {
       const multiplier = sortDirection === 'asc' ? 1 : -1;
       switch (sortColumn) {
@@ -312,10 +319,26 @@ export default function MarketsPageClient({
           marketsToFilter.sort((a, b) => (new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime()) * multiplier);
           break;
       }
+    } else if (timeframe !== 'trending' && timeframe !== 'new') {
+      // Apply rankBy sorting when no column sort is active (and not in trending/new views)
+      switch (rankBy) {
+        case 'volume':
+          marketsToFilter.sort((a, b) => b.volume24h - a.volume24h);
+          break;
+        case 'change':
+          marketsToFilter.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+          break;
+        case 'probability':
+          marketsToFilter.sort((a, b) => b.probability - a.probability);
+          break;
+        case 'ending':
+          marketsToFilter.sort((a, b) => new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime());
+          break;
+      }
     }
 
     return marketsToFilter;
-  }, [markets, timeframe, platform, category, searchQuery, sortColumn, sortDirection, advancedFilters]);
+  }, [markets, timeframe, platform, category, searchQuery, sortColumn, sortDirection, advancedFilters, rankBy]);
 
   // Calculate filtered stats
   const filteredStats = useMemo(() => {
@@ -390,6 +413,8 @@ export default function MarketsPageClient({
           setPlatform={handlePlatformChange}
           category={category}
           setCategory={handleCategoryChange}
+          rankBy={rankBy}
+          setRankBy={handleRankByChange}
           onOpenFilters={() => setFilterModalOpen(true)}
           hasActiveFilters={hasActiveFilters}
         />

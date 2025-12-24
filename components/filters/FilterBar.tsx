@@ -3,6 +3,8 @@
 import { cn } from '@/lib/utils';
 import { Category, Platform } from '@/types/market';
 
+export type RankBy = 'volume' | 'change' | 'probability' | 'ending';
+
 interface FilterBarProps {
   timeframe: string;
   setTimeframe: (t: string) => void;
@@ -10,6 +12,8 @@ interface FilterBarProps {
   setPlatform: (p: Platform | 'all') => void;
   category: Category | 'all';
   setCategory: (c: Category | 'all') => void;
+  rankBy: RankBy;
+  setRankBy: (r: RankBy) => void;
   onOpenFilters?: () => void;
   hasActiveFilters?: boolean;
 }
@@ -21,6 +25,8 @@ export default function FilterBar({
   setPlatform,
   category,
   setCategory,
+  rankBy,
+  setRankBy,
   onOpenFilters,
   hasActiveFilters,
 }: FilterBarProps) {
@@ -105,7 +111,11 @@ export default function FilterBar({
         <div className="ml-auto flex items-center gap-2 md:gap-3">
           <div className="hidden md:flex items-center gap-2 text-text-secondary text-sm">
             <span>Rank by:</span>
-            <select className="bg-surface border border-border rounded-lg px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent/50">
+            <select
+              value={rankBy}
+              onChange={(e) => setRankBy(e.target.value as RankBy)}
+              className="bg-surface border border-border rounded-lg px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent/50 cursor-pointer"
+            >
               <option value="volume">Volume 24H</option>
               <option value="change">% Change</option>
               <option value="probability">Probability</option>
