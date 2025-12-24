@@ -31,7 +31,7 @@ function getHourlyTimestamp(date: Date = new Date()): number {
  */
 export async function storePriceSnapshots(
   markets: Array<{ id: string; probability: number; volume24h?: number }>
-): Promise<{ success: boolean; count: number }> {
+): Promise<{ success: boolean; count: number; error?: string }> {
   const timestamp = getHourlyTimestamp();
   const key = `prices:${timestamp}`;
 
@@ -41,14 +41,15 @@ export async function storePriceSnapshots(
     snapshot[market.id] = market.probability;
   }
 
-  return safeRedis<{ success: boolean; count: number }>(
-    async () => {
-      // Store as JSON with TTL
-      await redis.set(key, JSON.stringify(snapshot), { ex: SNAPSHOT_TTL });
-      return { success: true, count: markets.length };
-    },
-    { success: false, count: 0 }
-  );
+  try {
+    // Store as JSON with TTL
+    await redis.set(key, JSON.stringify(snapshot), { ex: SNAPSHOT_TTL });
+    return { success: true, count: markets.length };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Snapshots] Store failed:', errorMessage, error);
+    return { success: false, count: 0, error: errorMessage };
+  }
 }
 
 /**

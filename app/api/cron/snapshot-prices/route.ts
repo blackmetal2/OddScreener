@@ -31,6 +31,20 @@ export async function GET(request: Request) {
   }
 
   try {
+    // Debug: Check env vars
+    const hasRedisUrl = !!process.env.UPSTASH_REDIS_REST_URL;
+    const hasRedisToken = !!process.env.UPSTASH_REDIS_REST_TOKEN;
+    console.log(`[Snapshot Cron] Redis config: url=${hasRedisUrl}, token=${hasRedisToken}`);
+
+    if (!hasRedisUrl || !hasRedisToken) {
+      return NextResponse.json({
+        success: false,
+        error: 'Missing Redis configuration',
+        debug: { hasRedisUrl, hasRedisToken },
+        timestamp: new Date().toISOString(),
+      }, { status: 500 });
+    }
+
     // Fetch all markets from Polymarket (10,000 max)
     console.log('[Snapshot Cron] Fetching markets...');
     const rawMarkets = await fetchPolymarketMarketsWithPagination(10000);
@@ -48,7 +62,18 @@ export async function GET(request: Request) {
     console.log(`[Snapshot Cron] Storing ${markets.length} market prices...`);
 
     // Store snapshot
-    const result = await storePriceSnapshots(markets);
+    let result;
+    try {
+      result = await storePriceSnapshots(markets);
+    } catch (storeError) {
+      console.error('[Snapshot Cron] Store error:', storeError);
+      return NextResponse.json({
+        success: false,
+        error: storeError instanceof Error ? storeError.message : 'Storage failed',
+        marketsFetched: markets.length,
+        timestamp: new Date().toISOString(),
+      }, { status: 500 });
+    }
 
     const duration = Date.now() - startTime;
 
@@ -60,8 +85,10 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: result.success,
       marketsStored: result.count,
+      marketsFetched: markets.length,
       duration: `${duration}ms`,
       stats,
+      ...(result.error && { error: result.error }),
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
