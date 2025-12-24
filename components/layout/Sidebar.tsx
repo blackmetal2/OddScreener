@@ -305,7 +305,6 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
           label="News"
           href="/news"
           active={pathname === '/news'}
-          badge="Soon"
         />
         <div className="pt-4 pb-2">
           <span className="px-4 text-xs font-medium text-text-muted uppercase tracking-wider">

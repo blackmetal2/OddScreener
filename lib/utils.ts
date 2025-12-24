@@ -98,6 +98,37 @@ export function formatFullDate(date: Date | null | undefined | string): string {
   });
 }
 
+export function formatDistanceToNow(date: Date | null | undefined | string): string {
+  if (!date) return 'just now';
+
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(dateObj.getTime())) return 'just now';
+
+  const now = new Date();
+  const diff = now.getTime() - dateObj.getTime();
+
+  if (diff < 0) return 'just now';
+
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) {
+    return 'just now';
+  }
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  if (days < 7) {
+    return `${days}d ago`;
+  }
+  return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function getCategoryColor(category: Category): string {
   const colors: Record<Category, string> = {
     politics: 'bg-blue-500/20 text-blue-400',

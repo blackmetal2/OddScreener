@@ -1,39 +1,54 @@
-'use client';
-
 import { Suspense } from 'react';
-import Sidebar from '@/components/layout/Sidebar';
+import NewsClient from './NewsClient';
+import { fetchGoogleNewsRSS } from '@/lib/api/googleNews';
+import { AdjacentNewsItem } from '@/lib/api/adjacent-news';
 
-function NewsContent() {
+export const metadata = {
+  title: 'News | OddScreener',
+  description: 'Real-time news affecting prediction markets',
+};
+
+export const dynamic = 'force-dynamic';
+
+async function getInitialNews(): Promise<AdjacentNewsItem[]> {
+  try {
+    const query = 'prediction markets OR betting odds OR Polymarket OR Kalshi';
+    const articles = await fetchGoogleNewsRSS(query);
+
+    // Transform to our news format
+    return articles.map((article, index) => ({
+      id: `gn-${Date.now()}-${index}`,
+      title: article.title,
+      url: article.link,
+      source: article.source,
+      publishedAt: article.pubDate.toISOString(),
+      createdAt: article.pubDate.toISOString(),
+    }));
+  } catch (error) {
+    console.error('Error fetching initial news:', error);
+    return [];
+  }
+}
+
+function NewsLoading() {
   return (
-    <div className="min-h-screen bg-background">
-      <Sidebar />
-      <main className="ml-0 md:ml-[200px] p-8">
-        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-          <div className="w-16 h-16 rounded-full bg-accent/20 flex items-center justify-center mb-6">
-            <svg className="w-8 h-8 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 01-2.25 2.25M16.5 7.5V18a2.25 2.25 0 002.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 002.25 2.25h13.5M6 7.5h3v3H6v-3z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-text-primary mb-2">News</h1>
-          <p className="text-text-secondary max-w-md">
-            Stay updated with the latest news affecting prediction markets. Coming soon.
-          </p>
-          <span className="mt-4 px-3 py-1 text-sm bg-accent/20 text-accent rounded-full">
-            Coming Soon
-          </span>
-        </div>
-      </main>
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <p className="text-text-secondary">Loading news...</p>
+      </div>
     </div>
   );
 }
 
+async function NewsContent() {
+  const initialNews = await getInitialNews();
+  return <NewsClient initialNews={initialNews} />;
+}
+
 export default function NewsPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    }>
+    <Suspense fallback={<NewsLoading />}>
       <NewsContent />
     </Suspense>
   );
