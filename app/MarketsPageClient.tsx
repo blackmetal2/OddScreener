@@ -261,23 +261,15 @@ export default function MarketsPageClient({
     switch (timeframe) {
       case 'trending':
         // Sort by trending score (volume spike + price movement + recency)
-        // Filter out: ended markets, low volume garbage, settled markets (0% or 100%)
-
-        // Find top 3 volume markets (override: keep high-volume settled markets)
-        const sortedByVolume = [...marketsToFilter].sort((a, b) => b.volume24h - a.volume24h);
-        const top3VolumeIds = new Set(sortedByVolume.slice(0, 3).map((m) => m.id));
+        // Filter out: ended markets, settled markets, low trendingScore
+        // Settled markets (0% or 100%) should go to "Top Volume" view, not Trending
 
         marketsToFilter = marketsToFilter
           .filter((m) => new Date(m.endsAt) > now) // Only active markets
-          .filter((m) => (m.trendingScore || 0) > 0)
-          // Hide settled markets (0% or 100%) unless in top 3 volume
-          .filter((m) => {
-            const isSettled = m.probability <= 0 || m.probability >= 100;
-            if (isSettled) {
-              return top3VolumeIds.has(m.id); // Override: keep top 3 volume
-            }
-            return true; // Keep active markets (1-99%)
-          });
+          .filter((m) => m.probability > 0 && m.probability < 100) // Exclude settled (0% or 100%)
+          .filter((m) => (m.trendingScore || 0) > 0) // Must have trending activity
+          .filter((m) => Math.abs(m.change24h) > 0 || m.volume24h > 50000); // Must have movement OR significant volume
+
         marketsToFilter.sort((a, b) => (b.trendingScore || 0) - (a.trendingScore || 0));
         break;
       case 'new':
