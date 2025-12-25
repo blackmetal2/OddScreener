@@ -188,6 +188,7 @@ export interface SpreadSnapshot {
   spreadPercent: number;
   bestBid: number;
   bestAsk: number;
+  depth1Pct?: number;
 }
 
 const SPREAD_KEY = 'spreads:latest';
@@ -198,15 +199,16 @@ const SPREAD_TTL = 60 * 60 * 2; // 2 hours (gives buffer for hourly cron)
  * Called by cron job every hour
  */
 export async function storeSpreadSnapshots(
-  spreads: Array<{ tokenId: string; spreadPercent: number; bestBid: number; bestAsk: number }>
+  spreads: Array<{ tokenId: string; spreadPercent: number; bestBid: number; bestAsk: number; depth1Pct?: number }>
 ): Promise<{ success: boolean; count: number; error?: string }> {
-  // Build snapshot object: { tokenId: { spreadPercent, bestBid, bestAsk }, ... }
+  // Build snapshot object: { tokenId: { spreadPercent, bestBid, bestAsk, depth1Pct }, ... }
   const snapshot: Record<string, SpreadSnapshot> = {};
   for (const spread of spreads) {
     snapshot[spread.tokenId] = {
       spreadPercent: spread.spreadPercent,
       bestBid: spread.bestBid,
       bestAsk: spread.bestAsk,
+      depth1Pct: spread.depth1Pct,
     };
   }
 

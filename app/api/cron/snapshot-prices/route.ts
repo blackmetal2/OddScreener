@@ -91,7 +91,7 @@ export async function GET(request: Request) {
 
     // Fetch spreads in batches of 100
     const BATCH_SIZE = 100;
-    const allSpreads: Array<{ tokenId: string; spreadPercent: number; bestBid: number; bestAsk: number }> = [];
+    const allSpreads: Array<{ tokenId: string; spreadPercent: number; bestBid: number; bestAsk: number; depth1Pct?: number }> = [];
 
     for (let i = 0; i < allTokenIds.length; i += BATCH_SIZE) {
       const batchTokenIds = allTokenIds.slice(i, i + BATCH_SIZE);
@@ -103,6 +103,7 @@ export async function GET(request: Request) {
             spreadPercent: data.spreadPercent,
             bestBid: data.bestBid,
             bestAsk: data.bestAsk,
+            depth1Pct: data.depth1Pct || undefined,
           });
         }
         console.log(`[Snapshot Cron] Spreads batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(allTokenIds.length / BATCH_SIZE)}: ${spreadsMap.size} fetched`);

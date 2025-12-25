@@ -99,9 +99,19 @@ function getEndsColor(endsAt: Date): string {
   return 'text-green-500';                                 // > 7 days
 }
 
+// Format depth as compact string (e.g., $45K, $1.2M)
+function formatDepth(depth: number | undefined): string {
+  if (depth === undefined || depth === null || isNaN(depth)) return '';
+  if (depth >= 1_000_000) return `$${(depth / 1_000_000).toFixed(1)}M`;
+  if (depth >= 1_000) return `$${(depth / 1_000).toFixed(0)}K`;
+  if (depth >= 100) return `$${Math.round(depth)}`;
+  return '';  // Don't show very low depth
+}
+
 // Tradability badge component
 function TradabilityBadge({ market }: { market: Market }) {
   const spread = market.spreadPercent;
+  const depth = market.depth1Pct;
   const prob = market.probability;
 
   // Don't show spread for:
@@ -129,11 +139,15 @@ function TradabilityBadge({ market }: { market: Market }) {
   };
 
   const { icon, color, bg } = config[status];
+  const depthStr = formatDepth(depth);
 
   return (
     <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono', color, bg)}>
       <span>{icon}</span>
-      <span>{spread !== undefined ? `${spread.toFixed(1)}%` : '-'}</span>
+      <span>
+        {spread !== undefined ? `${spread.toFixed(1)}%` : '-'}
+        {depthStr && <span className="opacity-70"> · {depthStr}</span>}
+      </span>
     </span>
   );
 }

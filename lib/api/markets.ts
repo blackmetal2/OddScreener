@@ -303,32 +303,35 @@ export async function getAllMarkets(
       const live = liveSpreadsMap.get(tokenId);
 
       if (cached) {
-        // Use cached spread data
+        // Use cached spread data (fallback to market liquidity for depth)
         const spreadDecimal = cached.spreadPercent / 100;
+        const depth = cached.depth1Pct || pm.liquidityNum || 0;
         const { score, status } = calculateTradability(
           spreadDecimal,
-          pm.liquidityNum || 0
+          depth
         );
 
         return {
           ...market,
           spread: cached.bestAsk - cached.bestBid,
           spreadPercent: cached.spreadPercent,
+          depth1Pct: depth, // Use fallback for display
           tradabilityScore: score,
           tradabilityStatus: status,
         };
       } else if (live) {
-        // Use live spread data (convert spreadPercent to decimal for consistent scoring)
+        // Use live spread data (fallback to market liquidity for depth)
+        const depth = live.depth1Pct || pm.liquidityNum || 0;
         const { score, status } = calculateTradability(
           live.spreadPercent / 100,
-          live.depth1Pct || pm.liquidityNum || 0
+          depth
         );
 
         return {
           ...market,
           spread: live.spread,
           spreadPercent: live.spreadPercent,
-          depth1Pct: live.depth1Pct,
+          depth1Pct: depth, // Use fallback for display
           tradabilityScore: score,
           tradabilityStatus: status,
         };
