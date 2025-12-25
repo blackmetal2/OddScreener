@@ -9,6 +9,7 @@ export interface MarketsCache {
   lastUpdated: string;
   markets: Market[];
   stats: GlobalStats;
+  limit?: number;  // Expected market count when cache was written
 }
 
 /**
@@ -36,11 +37,12 @@ export async function readMarketsCache(): Promise<MarketsCache | null> {
 /**
  * Write markets to JSON cache file
  */
-export async function writeMarketsCache(markets: Market[], stats: GlobalStats): Promise<void> {
+export async function writeMarketsCache(markets: Market[], stats: GlobalStats, limit: number = 2000): Promise<void> {
   const cache: MarketsCache = {
     lastUpdated: new Date().toISOString(),
     markets,
     stats,
+    limit,
   };
 
   // Ensure data directory exists
@@ -58,6 +60,14 @@ export function isCacheStale(cache: MarketsCache): boolean {
   const lastUpdated = new Date(cache.lastUpdated).getTime();
   const now = Date.now();
   return now - lastUpdated > CACHE_TTL_MS;
+}
+
+/**
+ * Check if cache has enough markets (at least 75% of expected)
+ */
+export function hasSufficientMarkets(cache: MarketsCache, expectedLimit: number = 2000): boolean {
+  const minRequired = Math.floor(expectedLimit * 0.75);
+  return cache.markets.length >= minRequired;
 }
 
 /**

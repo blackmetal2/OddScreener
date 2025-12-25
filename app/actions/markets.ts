@@ -13,6 +13,7 @@ import {
   readMarketsCache,
   writeMarketsCache,
   isCacheStale,
+  hasSufficientMarkets,
 } from '@/lib/cache/markets-cache';
 import {
   Market,
@@ -28,6 +29,8 @@ import {
   FilterState,
 } from '@/types/market';
 
+const EXPECTED_MARKET_LIMIT = 2000;
+
 /**
  * Get markets from cache, refresh if needed
  */
@@ -35,14 +38,20 @@ async function getMarketsFromCache(): Promise<Market[]> {
   // Try to read from cache
   const cache = await readMarketsCache();
 
-  if (cache && !isCacheStale(cache)) {
+  // Use cache only if: exists, not stale, AND has enough markets (75%+ of expected)
+  if (cache && !isCacheStale(cache) && hasSufficientMarkets(cache, EXPECTED_MARKET_LIMIT)) {
     console.log(`[Markets] Using cache (${cache.markets.length} markets)`);
     return cache.markets;
   }
 
-  // Cache is empty or stale - fetch fresh data
-  console.log('[Markets] Cache miss - fetching fresh data...');
-  const markets = await getAllMarkets(2000, false);
+  // Log reason for cache miss
+  if (cache && !isCacheStale(cache) && !hasSufficientMarkets(cache, EXPECTED_MARKET_LIMIT)) {
+    console.log(`[Markets] Cache has insufficient markets (${cache.markets.length}/${EXPECTED_MARKET_LIMIT}) - refreshing...`);
+  } else {
+    console.log('[Markets] Cache miss - fetching fresh data...');
+  }
+
+  const markets = await getAllMarkets(EXPECTED_MARKET_LIMIT, false);
 
   // Calculate stats and write to cache
   const stats: GlobalStats = {
@@ -51,8 +60,8 @@ async function getMarketsFromCache(): Promise<Market[]> {
     activeMarkets: markets.filter((m) => new Date(m.endsAt) > new Date()).length,
   };
 
-  // Write cache in background (don't await)
-  writeMarketsCache(markets, stats).catch((e) =>
+  // Write cache in background (don't await) - include limit for future checks
+  writeMarketsCache(markets, stats, EXPECTED_MARKET_LIMIT).catch((e) =>
     console.error('[Markets] Cache write failed:', e)
   );
 

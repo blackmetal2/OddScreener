@@ -355,8 +355,8 @@ export default function MarketsPageClient({
           marketsToFilter.sort((a, b) => (new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime()) * multiplier);
           break;
       }
-    } else if (timeframe !== 'trending' && timeframe !== 'new') {
-      // Apply rankBy sorting when no column sort is active (and not in trending/new views)
+    } else {
+      // Apply rankBy sorting when no column sort is active
       switch (rankBy) {
         case 'volume':
           marketsToFilter.sort((a, b) => b.volume24h - a.volume24h);
