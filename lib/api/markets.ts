@@ -318,9 +318,9 @@ export async function getAllMarkets(
           tradabilityStatus: status,
         };
       } else if (live) {
-        // Use live spread data
+        // Use live spread data (convert spreadPercent to decimal for consistent scoring)
         const { score, status } = calculateTradability(
-          live.spread,
+          live.spreadPercent / 100,
           live.depth1Pct || pm.liquidityNum || 0
         );
 
