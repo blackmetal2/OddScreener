@@ -90,6 +90,7 @@ export interface MarketTrade {
   price: number;   // 0-1
   trader: string;  // Display name or pseudonym
   traderAddress: string; // Full wallet address for navigation
+  traderProfileImage?: string; // Profile image URL
 }
 
 // Price history point (binary markets)

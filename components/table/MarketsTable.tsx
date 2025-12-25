@@ -142,7 +142,7 @@ function TradabilityBadge({ market }: { market: Market }) {
   const depthStr = formatDepth(depth);
 
   return (
-    <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono', color, bg)}>
+    <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono whitespace-nowrap', color, bg)}>
       <span>{icon}</span>
       <span>
         {spread !== undefined ? `${spread.toFixed(1)}%` : '-'}

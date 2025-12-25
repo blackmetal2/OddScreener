@@ -363,8 +363,36 @@ export async function getMarketById(
     const pm = await fetchPolymarketMarketById(id);
     if (!pm) return null;
 
-    const market = await normalizePolymarketMarket(pm, true);
+    // Don't fetch detailed price changes from CLOB - we'll use Redis snapshots instead
+    // This ensures consistency with the table view
+    const market = await normalizePolymarketMarket(pm, false);
     const tokenIds = getPolymarketTokenIds(pm);
+
+    // Get price changes from Redis snapshots (same as table listing)
+    try {
+      const priceChangesMap = await getBatchMarketPriceChanges([
+        { id: market.id, probability: market.probability }
+      ]);
+      const changes = priceChangesMap.get(market.id);
+      if (changes) {
+        market.change1h = changes.change1h;
+        market.change6h = changes.change6h;
+        market.change24h = changes.change24h || market.change24h;
+      }
+    } catch (e) {
+      console.warn('[getMarketById] Failed to fetch snapshot price changes:', e);
+    }
+
+    // Fetch cached spread data
+    let spreadData: SpreadSnapshot | null = null;
+    try {
+      const cachedSpreads = await getCachedSpreads();
+      if (cachedSpreads && tokenIds[0]) {
+        spreadData = cachedSpreads[tokenIds[0]] || null;
+      }
+    } catch (err) {
+      console.warn('[getMarketById] Failed to fetch spread data:', err);
+    }
 
     // Fetch price history for the chart
     let priceHistory: PolymarketPricePoint[] = [];
@@ -392,6 +420,11 @@ export async function getMarketById(
       }
     }
 
+    // Calculate tradability from spread data
+    const tradability = spreadData
+      ? calculateTradability(spreadData.spreadPercent / 100, spreadData.depth1Pct || 0)
+      : { score: 0, status: 'unknown' as TradabilityStatus };
+
     const detail: MarketDetail = {
       ...market,
       description: pm.description || '',
@@ -408,6 +441,11 @@ export async function getMarketById(
       allTimeLow: Math.round(allTimeLow),
       allTimeLowDate,
       platformUrl: `https://polymarket.com/event/${getPolymarketEventSlug(pm)}`,
+      // Spread/tradability data from cache
+      spreadPercent: spreadData?.spreadPercent,
+      depth1Pct: spreadData?.depth1Pct,
+      tradabilityScore: tradability.score,
+      tradabilityStatus: tradability.status,
       stats: {
         trades: 0,
         yesTrades: 0,
@@ -521,6 +559,7 @@ export async function getMarketTrades(
       price: trade.price,
       trader: sanitizeUsername(trade.name || trade.pseudonym, trade.proxyWallet),
       traderAddress: trade.proxyWallet,
+      traderProfileImage: trade.profileImage || undefined,
     }));
   } catch (error) {
     console.error('Error fetching market trades:', error);

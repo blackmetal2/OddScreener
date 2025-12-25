@@ -203,3 +203,40 @@ export function sanitizeUsername(
 
   return userName;
 }
+
+/**
+ * Format market age as relative time (e.g., "45 days ago", "2 months ago")
+ */
+export function formatMarketAge(date: Date | string | null | undefined): string {
+  if (!date) return '--';
+
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(dateObj.getTime())) return '--';
+
+  const now = new Date();
+  const diffMs = now.getTime() - dateObj.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+  return `${Math.floor(diffDays / 365)} years ago`;
+}
+
+/**
+ * Format date as short string (e.g., "Dec 20, 2025")
+ */
+export function formatShortDate(date: Date | string | null | undefined): string {
+  if (!date) return '--';
+
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(dateObj.getTime())) return '--';
+
+  return dateObj.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+}

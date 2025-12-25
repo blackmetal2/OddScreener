@@ -10,6 +10,8 @@ import {
   formatCompactNumber,
   formatChange,
   formatTimeUntil,
+  formatMarketAge,
+  formatShortDate,
   getCategoryColor,
   getCategoryLabel,
   getPlatformColor,
@@ -103,6 +105,29 @@ export default function MarketDetailClient({
   const volumeChartData = useMemo(() => {
     return processTradesForVolumeChart(trades, chartTimeframe, volumeMetric);
   }, [trades, chartTimeframe, volumeMetric]);
+
+  // Trade statistics calculated from trades array
+  const tradeStats = useMemo(() => {
+    const buyCount = trades.filter(t => t.type === 'buy').length;
+    const sellCount = trades.filter(t => t.type === 'sell').length;
+    const yesVolume = trades
+      .filter(t => t.outcome === 'YES' || t.outcome === 'Yes')
+      .reduce((sum, t) => sum + t.amount, 0);
+    const noVolume = trades
+      .filter(t => t.outcome === 'NO' || t.outcome === 'No')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { buyCount, sellCount, yesVolume, noVolume, total: trades.length };
+  }, [trades]);
+
+  // Odds display toggle (probability vs American odds)
+  const [showAmericanOdds, setShowAmericanOdds] = useState(false);
+  const toAmericanOdds = (probability: number): string => {
+    if (probability <= 0 || probability >= 100) return '--';
+    if (probability >= 50) {
+      return `-${Math.round((probability / (100 - probability)) * 100)}`;
+    }
+    return `+${Math.round(((100 - probability) / probability) * 100)}`;
+  };
 
   // Real-time market data state
   const [liveMarket, setLiveMarket] = useState<MarketDetail>(market);
@@ -596,9 +621,17 @@ export default function MarketDetailClient({
                             >
                               <td className="py-3 px-4 w-[180px]">
                                 <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs text-accent">
-                                    {trade.trader.charAt(0).toUpperCase()}
-                                  </div>
+                                  {trade.traderProfileImage ? (
+                                    <img
+                                      src={trade.traderProfileImage}
+                                      alt={trade.trader}
+                                      className="w-6 h-6 rounded-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs text-accent">
+                                      {trade.trader.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
                                   <span className="text-sm text-text-primary group-hover:text-accent transition-colors truncate max-w-[100px]">
                                     {trade.trader}
                                   </span>
@@ -798,6 +831,116 @@ export default function MarketDetailClient({
 
         {/* Right Sidebar */}
         <div className="w-80 border-l border-border p-6 space-y-6">
+          {/* Watch & Alert Actions */}
+          <div className="flex gap-2">
+            <button
+              onClick={toggleWatchlist}
+              className={cn(
+                'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors',
+                isWatched
+                  ? 'bg-accent/20 border border-accent text-accent'
+                  : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-border-light'
+              )}
+            >
+              <svg
+                className="w-4 h-4"
+                fill={isWatched ? 'currentColor' : 'none'}
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+              </svg>
+              {isWatched ? 'Watching' : 'Watch'}
+            </button>
+            <button
+              onClick={() => setShowAlertForm(!showAlertForm)}
+              className={cn(
+                'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors',
+                showAlertForm
+                  ? 'bg-accent/20 border border-accent text-accent'
+                  : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-border-light'
+              )}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+              </svg>
+              Alert
+            </button>
+          </div>
+
+          {/* Alert Creation Form */}
+          {showAlertForm && (
+            <div className="bg-surface rounded-xl border border-border p-4 animate-fade-in">
+              <h4 className="text-sm font-medium text-text-primary mb-3">Create Price Alert</h4>
+
+              <div className="space-y-3">
+                {/* Condition selector */}
+                <div>
+                  <label className="text-xs text-text-muted mb-1 block">Alert when price goes</label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setAlertCondition('above')}
+                      className={cn(
+                        'flex-1 px-3 py-2 text-sm rounded-lg transition-colors',
+                        alertCondition === 'above'
+                          ? 'bg-positive/20 text-positive border border-positive'
+                          : 'bg-background text-text-secondary border border-border hover:border-border-light'
+                      )}
+                    >
+                      Above
+                    </button>
+                    <button
+                      onClick={() => setAlertCondition('below')}
+                      className={cn(
+                        'flex-1 px-3 py-2 text-sm rounded-lg transition-colors',
+                        alertCondition === 'below'
+                          ? 'bg-negative/20 text-negative border border-negative'
+                          : 'bg-background text-text-secondary border border-border hover:border-border-light'
+                      )}
+                    >
+                      Below
+                    </button>
+                  </div>
+                </div>
+
+                {/* Threshold input */}
+                <div>
+                  <label className="text-xs text-text-muted mb-1 block">Threshold percentage</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max="99"
+                      value={alertThreshold}
+                      onChange={(e) => setAlertThreshold(Math.min(99, Math.max(1, parseInt(e.target.value) || 50)))}
+                      className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-accent"
+                    />
+                    <span className="text-text-secondary">%</span>
+                  </div>
+                  <p className="text-xs text-text-muted mt-1">
+                    Current: {liveMarket.probability}%
+                  </p>
+                </div>
+
+                {/* Notification permission status */}
+                {notificationPermission !== 'granted' && (
+                  <p className="text-xs text-orange-400">
+                    Notifications are not enabled. You'll be prompted to allow them.
+                  </p>
+                )}
+
+                {/* Submit button */}
+                <button
+                  onClick={createAlert}
+                  className="w-full px-4 py-2 bg-accent text-background font-medium rounded-lg hover:bg-accent-hover transition-colors"
+                >
+                  Create Alert
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Key Stats Grid */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-surface rounded-xl border border-border p-3">
@@ -811,12 +954,43 @@ export default function MarketDetailClient({
             <div className="bg-surface rounded-xl border border-border p-3">
               <div className="text-xs text-text-muted mb-1">All-Time High</div>
               <div className="font-mono text-lg font-semibold text-positive">{market.allTimeHigh}%</div>
+              <div className="text-xs text-text-muted mt-1">{formatShortDate(market.allTimeHighDate)}</div>
             </div>
             <div className="bg-surface rounded-xl border border-border p-3">
               <div className="text-xs text-text-muted mb-1">All-Time Low</div>
               <div className="font-mono text-lg font-semibold text-negative">{market.allTimeLow}%</div>
+              <div className="text-xs text-text-muted mt-1">{formatShortDate(market.allTimeLowDate)}</div>
             </div>
           </div>
+
+          {/* Spread & Tradability */}
+          {market.spreadPercent !== undefined && (
+            <div className="bg-surface rounded-xl border border-border p-4">
+              <h3 className="text-sm font-medium text-text-secondary mb-3">Tradability</h3>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-text-secondary text-sm">Spread</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-text-primary">{market.spreadPercent.toFixed(1)}%</span>
+                  <span className={cn(
+                    'text-xs px-1.5 py-0.5 rounded font-medium',
+                    market.tradabilityStatus === 'excellent' && 'bg-positive/20 text-positive',
+                    market.tradabilityStatus === 'good' && 'bg-green-500/20 text-green-400',
+                    market.tradabilityStatus === 'fair' && 'bg-yellow-500/20 text-yellow-400',
+                    market.tradabilityStatus === 'poor' && 'bg-negative/20 text-negative',
+                    market.tradabilityStatus === 'unknown' && 'bg-text-muted/20 text-text-muted'
+                  )}>
+                    {market.tradabilityStatus}
+                  </span>
+                </div>
+              </div>
+              {market.depth1Pct !== undefined && market.depth1Pct > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-text-secondary text-sm">Depth (1%)</span>
+                  <span className="font-mono text-sm text-text-primary">{formatNumber(market.depth1Pct)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Detailed Stats */}
           <div className="bg-surface rounded-xl border border-border p-4">
@@ -830,6 +1004,30 @@ export default function MarketDetailClient({
                 <span className="text-text-secondary text-sm">Liquidity</span>
                 <span className="font-mono text-sm text-text-primary">{formatNumber(market.liquidityDepth)}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary text-sm">Created</span>
+                <span className="text-sm text-text-primary">{formatMarketAge(market.createdAt)}</span>
+              </div>
+              {tradeStats.total > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary text-sm">Trades (Buy/Sell)</span>
+                    <span className="font-mono text-sm">
+                      <span className="text-positive">{tradeStats.buyCount}</span>
+                      <span className="text-text-muted"> / </span>
+                      <span className="text-negative">{tradeStats.sellCount}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary text-sm">Volume (Yes/No)</span>
+                    <span className="font-mono text-sm">
+                      <span className="text-positive">${formatCompactNumber(tradeStats.yesVolume)}</span>
+                      <span className="text-text-muted"> / </span>
+                      <span className="text-negative">${formatCompactNumber(tradeStats.noVolume)}</span>
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-text-secondary text-sm">1H Change</span>
                 <span className={cn('font-mono text-sm', market.change1h >= 0 ? 'text-positive' : 'text-negative')}>
@@ -851,6 +1049,49 @@ export default function MarketDetailClient({
             </div>
           </div>
 
+          {/* Odds Format Toggle */}
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-text-secondary">Display Format</h3>
+              <div className="flex items-center gap-0.5 bg-background rounded-lg p-0.5 border border-border">
+                <button
+                  onClick={() => setShowAmericanOdds(false)}
+                  className={cn(
+                    'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                    !showAmericanOdds
+                      ? 'bg-accent text-background shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  )}
+                >
+                  %
+                </button>
+                <button
+                  onClick={() => setShowAmericanOdds(true)}
+                  className={cn(
+                    'px-2 py-1 text-xs font-medium rounded-md transition-all duration-200',
+                    showAmericanOdds
+                      ? 'bg-accent text-background shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  )}
+                >
+                  Odds
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary text-sm">Yes</span>
+              <span className="font-mono text-lg font-semibold text-positive">
+                {showAmericanOdds ? toAmericanOdds(liveMarket.probability) : `${liveMarket.probability}%`}
+              </span>
+            </div>
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-text-secondary text-sm">No</span>
+              <span className="font-mono text-lg font-semibold text-negative">
+                {showAmericanOdds ? toAmericanOdds(100 - liveMarket.probability) : `${100 - liveMarket.probability}%`}
+              </span>
+            </div>
+          </div>
+
           {/* Resolution Info */}
           <div className="bg-surface rounded-xl border border-border p-4">
             <h3 className="text-sm font-medium text-text-secondary mb-4">Resolution</h3>
@@ -868,128 +1109,18 @@ export default function MarketDetailClient({
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="space-y-2">
-            <a
-              href={market.platformUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-accent text-background font-medium rounded-lg hover:bg-accent-hover transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-              </svg>
-              Trade on Polymarket
-            </a>
-            <div className="flex gap-2">
-              <button
-                onClick={toggleWatchlist}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors',
-                  isWatched
-                    ? 'bg-accent/20 border border-accent text-accent'
-                    : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-border-light'
-                )}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={isWatched ? 'currentColor' : 'none'}
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                </svg>
-                {isWatched ? 'Watching' : 'Watch'}
-              </button>
-              <button
-                onClick={() => setShowAlertForm(!showAlertForm)}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors',
-                  showAlertForm
-                    ? 'bg-accent/20 border border-accent text-accent'
-                    : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-border-light'
-                )}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                </svg>
-                Alert
-              </button>
-            </div>
-
-            {/* Alert Creation Form */}
-            {showAlertForm && (
-              <div className="bg-surface rounded-xl border border-border p-4 mt-2 animate-fade-in">
-                <h4 className="text-sm font-medium text-text-primary mb-3">Create Price Alert</h4>
-
-                <div className="space-y-3">
-                  {/* Condition selector */}
-                  <div>
-                    <label className="text-xs text-text-muted mb-1 block">Alert when price goes</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setAlertCondition('above')}
-                        className={cn(
-                          'flex-1 px-3 py-2 text-sm rounded-lg transition-colors',
-                          alertCondition === 'above'
-                            ? 'bg-positive/20 text-positive border border-positive'
-                            : 'bg-background text-text-secondary border border-border hover:border-border-light'
-                        )}
-                      >
-                        Above
-                      </button>
-                      <button
-                        onClick={() => setAlertCondition('below')}
-                        className={cn(
-                          'flex-1 px-3 py-2 text-sm rounded-lg transition-colors',
-                          alertCondition === 'below'
-                            ? 'bg-negative/20 text-negative border border-negative'
-                            : 'bg-background text-text-secondary border border-border hover:border-border-light'
-                        )}
-                      >
-                        Below
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Threshold input */}
-                  <div>
-                    <label className="text-xs text-text-muted mb-1 block">Threshold percentage</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="99"
-                        value={alertThreshold}
-                        onChange={(e) => setAlertThreshold(Math.min(99, Math.max(1, parseInt(e.target.value) || 50)))}
-                        className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-text-primary font-mono text-sm focus:outline-none focus:border-accent"
-                      />
-                      <span className="text-text-secondary">%</span>
-                    </div>
-                    <p className="text-xs text-text-muted mt-1">
-                      Current: {liveMarket.probability}%
-                    </p>
-                  </div>
-
-                  {/* Notification permission status */}
-                  {notificationPermission !== 'granted' && (
-                    <p className="text-xs text-orange-400">
-                      Notifications are not enabled. You'll be prompted to allow them.
-                    </p>
-                  )}
-
-                  {/* Submit button */}
-                  <button
-                    onClick={createAlert}
-                    className="w-full px-4 py-2 bg-accent text-background font-medium rounded-lg hover:bg-accent-hover transition-colors"
-                  >
-                    Create Alert
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Trade Action */}
+          <a
+            href={market.platformUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-accent text-background font-medium rounded-lg hover:bg-accent-hover transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+            </svg>
+            Trade on Polymarket
+          </a>
         </div>
       </div>
     </div>

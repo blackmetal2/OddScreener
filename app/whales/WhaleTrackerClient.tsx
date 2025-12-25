@@ -333,7 +333,17 @@ export default function WhaleTrackerClient({ initialLeaderboard }: WhaleTrackerC
                       <td className="py-3 px-4"><span className={cn('text-sm font-mono', entry.rank <= 3 ? 'text-accent font-bold' : 'text-text-muted')}>#{entry.rank}</span></td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-medium">{entry.displayName.charAt(0).toUpperCase()}</div>
+                          {entry.profileImage ? (
+                            <img
+                              src={entry.profileImage}
+                              alt={entry.displayName}
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-medium">
+                              {entry.displayName.charAt(0).toUpperCase()}
+                            </div>
+                          )}
                           <div>
                             <p className="text-sm font-medium text-text-primary">{entry.displayName}</p>
                             <p className="text-xs text-text-muted font-mono">{entry.address.slice(0, 6)}...{entry.address.slice(-4)}</p>

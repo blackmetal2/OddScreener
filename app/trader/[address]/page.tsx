@@ -4,7 +4,7 @@ import { fetchWalletTokenTransfers } from '@/lib/api/polygonscan';
 import TraderProfileClient from './TraderProfileClient';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 60;
+export const revalidate = 0; // Always fetch fresh trader data
 
 interface PageProps {
   params: Promise<{ address: string }>;

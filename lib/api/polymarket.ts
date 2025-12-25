@@ -149,8 +149,9 @@ export async function fetchPolymarketMarketById(
   marketId: string
 ): Promise<PolymarketMarket | null> {
   // Use list endpoint with ID filter to get events data (single market endpoint doesn't include it)
+  // No cache for detail pages - always fetch fresh data for accurate liquidity/volume
   const response = await fetch(`${GAMMA_API_BASE}/markets?id=${marketId}`, {
-    next: { revalidate: 30 },
+    cache: 'no-store',
   });
 
   if (!response.ok) {
@@ -762,7 +763,7 @@ export async function fetchUserPositions(
     });
 
     const response = await fetch(`${DATA_API_BASE}/positions?${params}`, {
-      next: { revalidate: 60 }, // 1 min cache
+      cache: 'no-store', // Fresh data for trader profiles
     });
 
     if (!response.ok) {
@@ -803,7 +804,7 @@ export async function fetchClosedPositions(
       });
 
       const response = await fetch(`${DATA_API_BASE}/closed-positions?${params}`, {
-        next: { revalidate: 60 },
+        cache: 'no-store', // Fresh data for trader profiles
       });
 
       if (!response.ok) {
@@ -843,7 +844,7 @@ export async function fetchUserTrades(
     });
 
     const response = await fetch(`${DATA_API_BASE}/activity?${params}`, {
-      next: { revalidate: 60 }, // 1 min cache
+      cache: 'no-store', // Fresh data for trader profiles
     });
 
     if (!response.ok) {
@@ -918,7 +919,7 @@ export async function fetchTraderProfile(
 
     const userResponse = await fetch(
       `${DATA_API_BASE}/v1/leaderboard?${userParams}`,
-      { next: { revalidate: 300 } }
+      { cache: 'no-store' } // Fresh data for trader profiles
     );
 
     if (userResponse.ok) {
@@ -967,6 +968,7 @@ export interface PolymarketMarketTrade {
   transactionHash: string;
   name?: string;
   pseudonym?: string;
+  profileImage?: string;
 }
 
 /**

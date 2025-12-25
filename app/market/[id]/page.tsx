@@ -5,7 +5,7 @@ import { Platform } from '@/types/market';
 import MarketDetailClient from './MarketDetailClient';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 30;
+export const revalidate = 0; // Always fetch fresh data for detail pages
 
 interface PageProps {
   params: Promise<{ id: string }>;
