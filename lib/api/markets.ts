@@ -533,7 +533,7 @@ export async function getMultiOutcomePriceHistory(
 export async function getMarketTrades(
   id: string,
   platform: Platform,
-  limit: number = 200
+  limit: number = 1000
 ): Promise<MarketTrade[]> {
   try {
     // Fetch market to get the conditionId

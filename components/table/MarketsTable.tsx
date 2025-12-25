@@ -182,7 +182,7 @@ export default function MarketsTable({ markets, sortColumn, sortDirection, onSor
               24H
             </SortableHeader>
             <SortableHeader column="volume" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[10%]">
-              Volume
+              Vol 24h
             </SortableHeader>
             <th className="py-3 px-2 text-right font-medium w-[8%] text-text-secondary">Spread</th>
             <SortableHeader column="ends" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[8%]">

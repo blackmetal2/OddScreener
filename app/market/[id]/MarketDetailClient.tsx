@@ -107,15 +107,27 @@ export default function MarketDetailClient({
   }, [trades, chartTimeframe, volumeMetric]);
 
   // Trade statistics calculated from trades array
+  // Volume is sentiment-based: YES = bullish flow, NO = bearish flow
   const tradeStats = useMemo(() => {
     const buyCount = trades.filter(t => t.type === 'buy').length;
     const sellCount = trades.filter(t => t.type === 'sell').length;
+
+    // YES volume = BUY YES (bullish) + SELL NO (closing bearish = bullish)
     const yesVolume = trades
-      .filter(t => t.outcome === 'YES' || t.outcome === 'Yes')
+      .filter(t =>
+        (t.type === 'buy' && (t.outcome === 'YES' || t.outcome === 'Yes')) ||
+        (t.type === 'sell' && (t.outcome === 'NO' || t.outcome === 'No'))
+      )
       .reduce((sum, t) => sum + t.amount, 0);
+
+    // NO volume = BUY NO (bearish) + SELL YES (closing bullish = bearish)
     const noVolume = trades
-      .filter(t => t.outcome === 'NO' || t.outcome === 'No')
+      .filter(t =>
+        (t.type === 'buy' && (t.outcome === 'NO' || t.outcome === 'No')) ||
+        (t.type === 'sell' && (t.outcome === 'YES' || t.outcome === 'Yes'))
+      )
       .reduce((sum, t) => sum + t.amount, 0);
+
     return { buyCount, sellCount, yesVolume, noVolume, total: trades.length };
   }, [trades]);
 
@@ -1011,7 +1023,18 @@ export default function MarketDetailClient({
               {tradeStats.total > 0 && (
                 <>
                   <div className="flex justify-between">
-                    <span className="text-text-secondary text-sm">Trades (Buy/Sell)</span>
+                    <span className="text-text-secondary text-sm flex items-center gap-1">
+                      Trades (Buy/Sell)
+                      <span className="relative group cursor-help">
+                        <svg className="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <circle cx="12" cy="12" r="10" strokeWidth="2"/>
+                          <path strokeLinecap="round" strokeWidth="2" d="M12 16v-4m0-4h.01"/>
+                        </svg>
+                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs bg-background border border-border rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                          Last 1000 trades
+                        </span>
+                      </span>
+                    </span>
                     <span className="font-mono text-sm">
                       <span className="text-positive">{tradeStats.buyCount}</span>
                       <span className="text-text-muted"> / </span>
