@@ -260,6 +260,7 @@ import {
   fetchUserTrades as fetchTradesAPI,
   fetchTraderProfile as fetchProfileAPI,
   fetchClosedPositions as fetchClosedPositionsAPI,
+  fetchRecentTradesForAddresses,
   PolymarketUserPosition,
   PolymarketUserTrade,
   PolymarketClosedPosition,
@@ -397,5 +398,41 @@ export async function fetchTraderProfileData(address: string): Promise<TraderPro
   } catch (error) {
     console.error('Error in fetchTraderProfileData:', error);
     return null;
+  }
+}
+
+/**
+ * Fetch recent trades for multiple tracked whales
+ * Returns a serializable object (not Map) for client use
+ */
+export async function fetchTrackedWhaleTrades(
+  addresses: string[]
+): Promise<Record<string, TraderTrade | null>> {
+  try {
+    if (addresses.length === 0) {
+      return {};
+    }
+
+    // Fetch 1 trade per address
+    const tradesMap = await fetchRecentTradesForAddresses(addresses, 1);
+
+    // Transform to serializable object with TraderTrade format
+    const result: Record<string, TraderTrade | null> = {};
+
+    for (const address of addresses) {
+      const normalizedAddress = address.toLowerCase();
+      const trades = tradesMap.get(normalizedAddress);
+
+      if (trades && trades.length > 0) {
+        result[normalizedAddress] = transformTrade(trades[0]);
+      } else {
+        result[normalizedAddress] = null;
+      }
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error in fetchTrackedWhaleTrades:', error);
+    return {};
   }
 }

@@ -310,13 +310,22 @@ export default function MarketsPageClient({
           // Liquidity floor: minimum $1K volume
           .filter((m) => m.volume24h >= MOVERS_MIN_VOLUME);
 
-        // Sort by absolute change based on selected timeframe
+        // Volume-weighted sorting: prioritize moves backed by volume
+        // Big move + big volume = real signal, big move + low volume = noise
         const getChange = (m: Market) => {
           if (timeframe === '1h') return m.change1h;
           if (timeframe === '6h') return m.change6h;
           return m.change24h; // movers and 24h use 24h change
         };
-        marketsToFilter.sort((a, b) => Math.abs(getChange(b)) - Math.abs(getChange(a)));
+
+        // Weight by volume (log scale to prevent mega-volume markets dominating)
+        const volumeWeight = (m: Market) => Math.log10(Math.max(m.volume24h, 1000));
+
+        marketsToFilter.sort((a, b) => {
+          const scoreA = Math.abs(getChange(a)) * volumeWeight(a);
+          const scoreB = Math.abs(getChange(b)) * volumeWeight(b);
+          return scoreB - scoreA;
+        });
         break;
       }
       default:

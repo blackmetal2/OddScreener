@@ -1,4 +1,5 @@
 import WhaleTrackerClient from './WhaleTrackerClient';
+import { sanitizeUsername } from '@/lib/utils';
 
 export const metadata = {
   title: 'Whale Tracker | OddScreener',
@@ -32,16 +33,20 @@ async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
     const data = await response.json();
 
     // Transform API response to our format
-    return (data || []).map((entry: any) => ({
-      rank: parseInt(entry.rank) || 0,
-      address: entry.proxyWallet || '',
-      displayName: entry.userName || `Trader ${entry.rank}`,
-      profileImage: entry.profileImage || undefined,
-      profit: entry.pnl || 0,
-      volume: entry.vol || 0,
-      winRate: 0, // Not provided by API
-      tradesCount: 0, // Not provided by API
-    }));
+    return (data || []).map((entry: any) => {
+      const address = entry.proxyWallet || '';
+      const rank = parseInt(entry.rank) || 0;
+      return {
+        rank,
+        address,
+        displayName: sanitizeUsername(entry.userName, address, `Trader ${rank}`),
+        profileImage: entry.profileImage || undefined,
+        profit: entry.pnl || 0,
+        volume: entry.vol || 0,
+        winRate: 0, // Not provided by API
+        tradesCount: 0, // Not provided by API
+      };
+    });
   } catch (error) {
     console.error('Error fetching leaderboard:', error);
     return [];

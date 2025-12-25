@@ -10,6 +10,7 @@ import {
   Platform,
   Category,
 } from '@/types/market';
+import { sanitizeUsername } from '@/lib/utils';
 import {
   fetchPolymarketMarkets,
   fetchPolymarketMarketsWithPagination,
@@ -23,9 +24,41 @@ import {
   getPolymarketEventSlug,
   mapPolymarketCategory,
   calculatePriceChange,
+  fetchBatchSpreads,
+  SpreadData,
 } from './polymarket';
+import { TradabilityStatus } from '@/types/market';
 import { PolymarketMarket, PolymarketPricePoint } from './types';
-import { getBatchMarketPriceChanges } from './snapshots';
+import { getBatchMarketPriceChanges, getCachedSpreads, SpreadSnapshot } from './snapshots';
+
+/**
+ * Calculate tradability score and status from spread and depth data
+ */
+function calculateTradability(spread: number, depth: number): {
+  score: number;
+  status: TradabilityStatus;
+} {
+  // Spread scoring (0-5 points)
+  let spreadScore = 0;
+  if (spread < 0.005) spreadScore = 5;      // <0.5%
+  else if (spread < 0.01) spreadScore = 4;  // <1%
+  else if (spread < 0.02) spreadScore = 3;  // <2%
+  else if (spread < 0.05) spreadScore = 2;  // <5%
+  else if (spread < 0.10) spreadScore = 1;  // <10%
+
+  // Depth scoring (0-5 points) based on $K available
+  let depthScore = 0;
+  if (depth > 100000) depthScore = 5;       // >$100K
+  else if (depth > 50000) depthScore = 4;   // >$50K
+  else if (depth > 20000) depthScore = 3;   // >$20K
+  else if (depth > 5000) depthScore = 2;    // >$5K
+  else if (depth > 1000) depthScore = 1;    // >$1K
+
+  const score = spreadScore + depthScore;
+  const status: TradabilityStatus = score >= 8 ? 'excellent' : score >= 6 ? 'good' : score >= 4 ? 'fair' : 'poor';
+
+  return { score, status };
+}
 
 /**
  * Normalize a Polymarket market to our Market type
@@ -103,33 +136,41 @@ async function normalizePolymarketMarket(
 
 /**
  * Calculate trending score for a market
- * Higher score = more trending (volume spike + price movement + recency)
+ * Enhanced with volume-weighted signals for better quality
+ * Higher score = more trending (volume spike + volume-weighted price movement + liquidity + recency)
  */
 function calculateTrendingScore(pm: PolymarketMarket): number {
-  const volume24h = pm.volume24hr || pm.volume24hrNum || 0;
+  const volume24h = pm.volume24hrNum || pm.volume24hr || 0;
   const volume7d = pm.volume1wk || 0;
   const priceChange = Math.abs(pm.oneDayPriceChange || 0);
+  const liquidity = pm.liquidityNum || pm.liquidity || 0;
   const createdAt = new Date(pm.createdAt);
   const hoursOld = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60);
 
   // Minimum volume threshold - no trending for garbage markets
   if (volume24h < 5000) return 0;
 
-  // Volume spike ratio: compare 24h to daily average of 7d
-  // If volume24h is 3x the daily average, spike ratio = 3
+  // 1. Volume Spike (40% weight)
+  // Compare 24h volume to 7-day daily average
   const dailyAvg7d = volume7d > 0 ? volume7d / 7 : volume24h;
-  const volumeSpike = dailyAvg7d > 0 ? volume24h / dailyAvg7d : 1;
+  const volumeSpike = Math.min(volume24h / dailyAvg7d, 10);
+  const volumeScore = volumeSpike * 4; // 0-40 points
 
-  // Price velocity boost (bigger price swings = more trending)
-  // priceChange of 0.10 (10%) gets 2x boost
-  const priceBoost = 1 + priceChange * 10;
+  // 2. Volume-Weighted Price Movement (30% weight)
+  // Big move + big volume = real signal
+  // Big move + low volume = noise
+  const volumeRatio = Math.min(volume24h / 100000, 1); // Normalize to $100K
+  const priceScore = priceChange * volumeRatio * 100 * 3; // 0-30 points
 
-  // Recency boost for newer markets (decay over 30 days)
-  const recencyBoost = Math.max(0, 1 - hoursOld / 720) * 0.5 + 1;
+  // 3. Liquidity Quality (20% weight)
+  // Higher liquidity = more tradable = better signal
+  const liquidityScore = Math.min(liquidity / 500000, 1) * 20; // 0-20 points
 
-  // Final score: cap volume spike to avoid outliers dominating
-  const cappedVolumeSpike = Math.min(volumeSpike, 10);
-  return cappedVolumeSpike * priceBoost * recencyBoost;
+  // 4. Recency Boost (10% weight)
+  // Newer markets get slight boost (decays over 30 days)
+  const recencyScore = Math.max(0, 1 - hoursOld / 720) * 10; // 0-10 points
+
+  return volumeScore + priceScore + liquidityScore + recencyScore;
 }
 
 /**
@@ -196,8 +237,112 @@ export async function getAllMarkets(
       };
     });
 
+    // ============================================
+    // SPREAD DATA: Try Redis cache first, fallback to live API
+    // ============================================
+
+    // Build token ID to market ID mapping for ALL markets
+    const tokenToMarketMap = new Map<string, string>();
+    for (const pm of polymarketData) {
+      const tokenIds = getPolymarketTokenIds(pm);
+      if (tokenIds.length > 0) {
+        tokenToMarketMap.set(tokenIds[0], pm.id);
+      }
+    }
+
+    // Try to get cached spreads from Redis (updated hourly by cron)
+    let cachedSpreads: Record<string, SpreadSnapshot> | null = null;
+    try {
+      cachedSpreads = await getCachedSpreads();
+      if (cachedSpreads) {
+        console.log(`[Markets] Got ${Object.keys(cachedSpreads).length} spreads from Redis cache`);
+      }
+    } catch (e) {
+      console.warn('[Markets] Error fetching cached spreads:', e);
+    }
+
+    // Fallback: If no cached spreads, fetch live for top 100 markets only
+    let liveSpreadsMap = new Map<string, SpreadData>();
+    if (!cachedSpreads || Object.keys(cachedSpreads).length === 0) {
+      console.log('[Markets] No cached spreads, fetching live for top 100...');
+      const topMarketsByVolume = [...marketsWithChanges]
+        .sort((a, b) => b.volume24h - a.volume24h)
+        .slice(0, 100);
+
+      const topTokenIds: string[] = [];
+      for (const market of topMarketsByVolume) {
+        const pm = polymarketData.find((p) => p.id === market.id);
+        if (pm) {
+          const tokenIds = getPolymarketTokenIds(pm);
+          if (tokenIds.length > 0) {
+            topTokenIds.push(tokenIds[0]);
+          }
+        }
+      }
+
+      try {
+        liveSpreadsMap = await fetchBatchSpreads(topTokenIds);
+        console.log(`[Markets] Got ${liveSpreadsMap.size} spreads from live API`);
+      } catch (e) {
+        console.error('[Markets] Error fetching live spreads:', e);
+      }
+    }
+
+    // Apply spread data to markets
+    const marketsWithSpreads = marketsWithChanges.map((market) => {
+      const pm = polymarketData.find((p) => p.id === market.id);
+      if (!pm) return market;
+
+      const tokenIds = getPolymarketTokenIds(pm);
+      if (tokenIds.length === 0) return market;
+
+      const tokenId = tokenIds[0];
+
+      // Try cached spread first, then live spread
+      const cached = cachedSpreads?.[tokenId];
+      const live = liveSpreadsMap.get(tokenId);
+
+      if (cached) {
+        // Use cached spread data
+        const spreadDecimal = cached.spreadPercent / 100;
+        const { score, status } = calculateTradability(
+          spreadDecimal,
+          pm.liquidityNum || 0
+        );
+
+        return {
+          ...market,
+          spread: cached.bestAsk - cached.bestBid,
+          spreadPercent: cached.spreadPercent,
+          tradabilityScore: score,
+          tradabilityStatus: status,
+        };
+      } else if (live) {
+        // Use live spread data
+        const { score, status } = calculateTradability(
+          live.spread,
+          live.depth1Pct || pm.liquidityNum || 0
+        );
+
+        return {
+          ...market,
+          spread: live.spread,
+          spreadPercent: live.spreadPercent,
+          depth1Pct: live.depth1Pct,
+          tradabilityScore: score,
+          tradabilityStatus: status,
+        };
+      }
+
+      // No spread data available
+      return {
+        ...market,
+        tradabilityStatus: 'unknown' as const,
+      };
+    });
+
     // Sort by volume descending (default)
-    return marketsWithChanges.sort((a, b) => b.volume24h - a.volume24h);
+    return marketsWithSpreads.sort((a, b) => b.volume24h - a.volume24h);
   } catch (error) {
     console.error('Error fetching all markets:', error);
     return [];
@@ -371,7 +516,7 @@ export async function getMarketTrades(
       amount: trade.size * trade.price, // USD value
       shares: trade.size,
       price: trade.price,
-      trader: trade.name || trade.pseudonym || `${trade.proxyWallet.slice(0, 6)}...${trade.proxyWallet.slice(-4)}`,
+      trader: sanitizeUsername(trade.name || trade.pseudonym, trade.proxyWallet),
       traderAddress: trade.proxyWallet,
     }));
   } catch (error) {
@@ -448,10 +593,9 @@ export async function getMarketHolders(
 
         holders.push({
           wallet: holder.proxyWallet,
-          name:
-            holder.displayUsernamePublic && holder.name
-              ? holder.name
-              : holder.pseudonym || `${holder.proxyWallet.slice(0, 6)}...${holder.proxyWallet.slice(-4)}`,
+          name: holder.displayUsernamePublic && holder.name
+            ? sanitizeUsername(holder.name, holder.proxyWallet)
+            : sanitizeUsername(holder.pseudonym, holder.proxyWallet),
           profileImage: holder.profileImageOptimized || holder.profileImage,
           outcome: outcomeName,
           amount: holder.amount,

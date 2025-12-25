@@ -6,6 +6,7 @@ import {
   PolymarketPricePoint,
   PolymarketTokenHolders,
 } from './types';
+import { sanitizeUsername } from '@/lib/utils';
 
 const GAMMA_API_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_API_BASE = 'https://clob.polymarket.com';
@@ -186,6 +187,193 @@ export async function fetchPolymarketPriceHistory(
 
   const data: PolymarketPriceHistoryResponse = await response.json();
   return data.history || [];
+}
+
+// ============================================
+// ORDER BOOK & SPREAD API
+// ============================================
+
+export interface OrderBookLevel {
+  price: number;
+  size: number;
+}
+
+export interface OrderBook {
+  market: string;
+  assetId: string;
+  timestamp: string;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+}
+
+export interface SpreadData {
+  tokenId: string;
+  bestBid: number;
+  bestAsk: number;
+  spread: number;
+  spreadPercent: number;
+  midPrice: number;
+  depth1Pct: number; // Volume within 1% of mid
+}
+
+/**
+ * Fetch order book for a specific token
+ * @param tokenId - The CLOB token ID
+ */
+export async function fetchOrderBook(tokenId: string): Promise<OrderBook | null> {
+  try {
+    const response = await fetch(`${CLOB_API_BASE}/book?token_id=${tokenId}`, {
+      next: { revalidate: 60 }, // 1 min cache for order book
+    });
+
+    if (!response.ok) {
+      console.error(`[Polymarket] Order book error for ${tokenId}: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    return {
+      market: data.market || '',
+      assetId: data.asset_id || tokenId,
+      timestamp: data.timestamp || new Date().toISOString(),
+      bids: (data.bids || []).map((b: { price: string; size: string }) => ({
+        price: parseFloat(b.price),
+        size: parseFloat(b.size),
+      })),
+      asks: (data.asks || []).map((a: { price: string; size: string }) => ({
+        price: parseFloat(a.price),
+        size: parseFloat(a.size),
+      })),
+    };
+  } catch (error) {
+    console.error(`[Polymarket] Failed to fetch order book for ${tokenId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Calculate spread data from an order book
+ */
+export function calculateSpreadFromOrderBook(orderBook: OrderBook, tokenId: string): SpreadData {
+  const { bids, asks } = orderBook;
+
+  // Default values for empty or invalid order books
+  if (!bids.length || !asks.length) {
+    return {
+      tokenId,
+      bestBid: 0,
+      bestAsk: 1,
+      spread: 1,
+      spreadPercent: 100,
+      midPrice: 0.5,
+      depth1Pct: 0,
+    };
+  }
+
+  // Polymarket API returns bids ascending (lowest first) and asks descending (highest first)
+  // Best bid = highest bid price, Best ask = lowest ask price
+  const bestBid = Math.max(...bids.map(b => b.price));
+  const bestAsk = Math.min(...asks.map(a => a.price));
+  const spread = bestAsk - bestBid;
+  const midPrice = (bestBid + bestAsk) / 2;
+  const spreadPercent = midPrice > 0 ? (spread / midPrice) * 100 : 100;
+
+  // Calculate depth within 1% of mid price
+  const lowerBound = midPrice * 0.99;
+  const upperBound = midPrice * 1.01;
+
+  const bidDepth = bids
+    .filter((b) => b.price >= lowerBound)
+    .reduce((sum, b) => sum + b.size * b.price, 0);
+
+  const askDepth = asks
+    .filter((a) => a.price <= upperBound)
+    .reduce((sum, a) => sum + a.size * a.price, 0);
+
+  const depth1Pct = bidDepth + askDepth;
+
+  return {
+    tokenId,
+    bestBid,
+    bestAsk,
+    spread,
+    spreadPercent,
+    midPrice,
+    depth1Pct,
+  };
+}
+
+/**
+ * Fetch spreads for multiple tokens in batch
+ * Falls back to individual order book fetches if batch fails
+ */
+export async function fetchBatchSpreads(
+  tokenIds: string[]
+): Promise<Map<string, SpreadData>> {
+  const spreadsMap = new Map<string, SpreadData>();
+
+  if (tokenIds.length === 0) {
+    return spreadsMap;
+  }
+
+  // Limit to first 100 tokens to avoid overwhelming the API
+  const limitedTokenIds = tokenIds.slice(0, 100);
+
+  try {
+    // Try batch spreads endpoint first
+    const response = await fetch(`${CLOB_API_BASE}/spreads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token_ids: limitedTokenIds }),
+      next: { revalidate: 60 }, // 1 min cache
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      // Process batch response
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item.token_id) {
+            const spread = parseFloat(item.spread || '0');
+            const bestBid = parseFloat(item.bid || '0');
+            const bestAsk = parseFloat(item.ask || '1');
+            const midPrice = (bestBid + bestAsk) / 2;
+            spreadsMap.set(item.token_id, {
+              tokenId: item.token_id,
+              bestBid,
+              bestAsk,
+              spread,
+              spreadPercent: midPrice > 0 ? (spread / midPrice) * 100 : 100,
+              midPrice,
+              depth1Pct: 0, // Not available in batch endpoint
+            });
+          }
+        }
+        console.log(`[Polymarket] Batch spreads: ${spreadsMap.size}/${limitedTokenIds.length} tokens`);
+        return spreadsMap;
+      }
+    }
+  } catch (error) {
+    console.warn('[Polymarket] Batch spreads failed, falling back to individual fetches:', error);
+  }
+
+  // Fallback: fetch order books individually (in parallel, limited concurrency)
+  const CONCURRENCY = 10;
+  for (let i = 0; i < limitedTokenIds.length; i += CONCURRENCY) {
+    const batch = limitedTokenIds.slice(i, i + CONCURRENCY);
+    const orderBooks = await Promise.all(batch.map((id) => fetchOrderBook(id)));
+
+    for (let j = 0; j < batch.length; j++) {
+      const orderBook = orderBooks[j];
+      if (orderBook) {
+        const spreadData = calculateSpreadFromOrderBook(orderBook, batch[j]);
+        spreadsMap.set(batch[j], spreadData);
+      }
+    }
+  }
+
+  console.log(`[Polymarket] Individual order books: ${spreadsMap.size}/${limitedTokenIds.length} tokens`);
+  return spreadsMap;
 }
 
 /**
@@ -385,11 +573,22 @@ export function mapPolymarketCategory(
   if (question) {
     const q = question.toLowerCase();
 
+    // Sports FIRST - NBA/NFL/MLB/NHL teams and common sports terms
+    // Check before other categories to prevent "Rockets" matching "rocket" in science
+    const sportsTeams = /\b(lakers|celtics|warriors|bulls|heat|knicks|nets|rockets|spurs|mavericks|suns|bucks|76ers|sixers|clippers|nuggets|grizzlies|hawks|hornets|jazz|kings|magic|pacers|pelicans|pistons|raptors|thunder|timberwolves|blazers|trail blazers|wizards|cavaliers|cowboys|eagles|chiefs|49ers|niners|patriots|bills|dolphins|jets|ravens|steelers|bengals|browns|titans|colts|texans|jaguars|commanders|giants|bears|packers|vikings|lions|saints|buccaneers|bucs|falcons|panthers|cardinals|rams|seahawks|chargers|raiders|broncos|yankees|red sox|dodgers|mets|cubs|braves|astros|phillies|padres|mariners|rangers|guardians|twins|tigers|white sox|royals|orioles|blue jays|angels|athletics|rays|marlins|nationals|reds|brewers|pirates|diamondbacks|rockies|giants|bruins|blackhawks|penguins|capitals|avalanche|lightning|hurricanes|panthers|rangers|islanders|devils|flyers|maple leafs|canadiens|senators|sabres|red wings|blue jackets|predators|stars|wild|jets|flames|oilers|canucks|kraken|golden knights|coyotes|sharks|ducks|kings)\b/;
+    const sportsGeneral = /\bnfl\b|\bnba\b|\bmlb\b|\bnhl\b|\bufc\b|\bboxing\b|\bfight night\b|\bchampionship\b|\bsuper bowl\b|\bworld series\b|\bplayoff|\bplayoffs\b|\bmvp\b|\ball-star\b|\bstanley cup\b|\bworld cup\b|\beuro 202|\bpremier league\b|\bla liga\b|\bbundesliga\b|\bserie a\b|\bchampions league\b|vs\.?\s+[a-z]/;
+    if (sportsTeams.test(q) || sportsGeneral.test(q))
+      return 'sports';
+
+    // Culture/Entertainment - check before crypto to prevent Oscar markets in crypto
+    if (/\boscar|\boscars\b|\bacademy award|\bgrammy|\bgrammys\b|\bemmy|\bemmys\b|\bgolden globe|\bcelebrity|\bhollywood\b|\bnetflix\b|\balbum\b|\bconcert\b|\btour\b|\baward show|\bkardashian|\btaylor swift|\bbeyonce|\bdrake\b|\bkanye\b|\btravis scott|\bbillboard\b|\bstreaming\b|\bbox office\b|\bmovie\b|\bfilm\b|\bactor\b|\bactress\b/.test(q))
+      return 'culture';
+
     // Politics - elections, government, politicians
     if (/trump|biden|harris|election|president|congress|senate|vote|democrat|republican|governor|mayor|political|impeach|cabinet/.test(q))
       return 'politics';
 
-    // Crypto - cryptocurrencies
+    // Crypto - cryptocurrencies (now checked after culture)
     if (/bitcoin|btc|eth|ethereum|crypto|solana|xrp|dogecoin|coinbase|binance|defi|nft/.test(q))
       return 'crypto';
 
@@ -397,20 +596,12 @@ export function mapPolymarketCategory(
     if (/fed |federal reserve|rate cut|rate hike|stock|economy|gdp|inflation|recession|s&p|nasdaq|dow|treasury|yield|unemployment/.test(q))
       return 'finance';
 
-    // Sports - games, matches, championships
-    if (/nfl|nba|mlb|nhl|ufc|boxing|fight|game|match|championship|super bowl|world series|playoff|mvp|draft|trade/.test(q))
-      return 'sports';
-
-    // Culture - entertainment, celebrities
-    if (/movie|oscar|grammy|emmy|celebrity|hollywood|netflix|album|concert|tour|award show|kardashian|taylor swift/.test(q))
-      return 'culture';
-
     // Tech - technology companies, AI
     if (/\bai\b|artificial intelligence|openai|chatgpt|apple|google|microsoft|meta|amazon|tesla|spacex|twitter|tiktok/.test(q))
       return 'tech';
 
-    // Science - climate, space, research
-    if (/climate|nasa|space|spacex|rocket|mars|moon|science|research|vaccine|covid|pandemic|hurricane|earthquake|weather/.test(q))
+    // Science - climate, space, research (rocket only in space context, not team names)
+    if (/climate|nasa|\bspace\b|rocket launch|mars|moon|science|research|vaccine|covid|pandemic|hurricane|earthquake|weather/.test(q))
       return 'science';
   }
 
@@ -669,6 +860,42 @@ export async function fetchUserTrades(
 }
 
 /**
+ * Fetch recent trades for multiple addresses in parallel
+ * Used for tracked whales feature
+ * @param addresses - Array of wallet addresses
+ * @param tradesPerAddress - Number of recent trades per address (default 1)
+ */
+export async function fetchRecentTradesForAddresses(
+  addresses: string[],
+  tradesPerAddress: number = 1
+): Promise<Map<string, PolymarketUserTrade[]>> {
+  const results = new Map<string, PolymarketUserTrade[]>();
+
+  if (addresses.length === 0) {
+    return results;
+  }
+
+  // Fetch in parallel
+  const promises = addresses.map(async (address) => {
+    try {
+      const trades = await fetchUserTrades(address, tradesPerAddress);
+      return { address: address.toLowerCase(), trades };
+    } catch (error) {
+      console.warn(`Failed to fetch trades for ${address}:`, error);
+      return { address: address.toLowerCase(), trades: [] };
+    }
+  });
+
+  const responses = await Promise.all(promises);
+
+  for (const { address, trades } of responses) {
+    results.set(address, trades);
+  }
+
+  return results;
+}
+
+/**
  * Get trader profile from leaderboard data
  * Uses timePeriod=ALL for all-time P&L and queries user directly
  * @param address - User wallet address
@@ -700,7 +927,7 @@ export async function fetchTraderProfile(
         const entry = userData[0];
         return {
           rank: parseInt(entry.rank) || 0,
-          displayName: entry.userName || `${address.slice(0, 6)}...${address.slice(-4)}`,
+          displayName: sanitizeUsername(entry.userName, address),
           pnl: entry.pnl || 0,
           volume: entry.vol || 0,
           profileImage: entry.profileImage,

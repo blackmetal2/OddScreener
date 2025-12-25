@@ -162,11 +162,13 @@ export async function getSnapshotStats(): Promise<{
   has6h: boolean;
   has24h: boolean;
   marketCount1h: number;
+  spreadCount?: number;
 }> {
-  const [snapshot1h, snapshot6h, snapshot24h] = await Promise.all([
+  const [snapshot1h, snapshot6h, snapshot24h, spreads] = await Promise.all([
     getSnapshotFromHoursAgo(1),
     getSnapshotFromHoursAgo(6),
     getSnapshotFromHoursAgo(24),
+    getCachedSpreads(),
   ]);
 
   return {
@@ -174,5 +176,60 @@ export async function getSnapshotStats(): Promise<{
     has6h: snapshot6h !== null,
     has24h: snapshot24h !== null,
     marketCount1h: snapshot1h ? Object.keys(snapshot1h).length : 0,
+    spreadCount: spreads ? Object.keys(spreads).length : 0,
   };
+}
+
+// ============================================
+// SPREAD CACHING
+// ============================================
+
+export interface SpreadSnapshot {
+  spreadPercent: number;
+  bestBid: number;
+  bestAsk: number;
+}
+
+const SPREAD_KEY = 'spreads:latest';
+const SPREAD_TTL = 60 * 60 * 2; // 2 hours (gives buffer for hourly cron)
+
+/**
+ * Store spread snapshots for all markets
+ * Called by cron job every hour
+ */
+export async function storeSpreadSnapshots(
+  spreads: Array<{ tokenId: string; spreadPercent: number; bestBid: number; bestAsk: number }>
+): Promise<{ success: boolean; count: number; error?: string }> {
+  // Build snapshot object: { tokenId: { spreadPercent, bestBid, bestAsk }, ... }
+  const snapshot: Record<string, SpreadSnapshot> = {};
+  for (const spread of spreads) {
+    snapshot[spread.tokenId] = {
+      spreadPercent: spread.spreadPercent,
+      bestBid: spread.bestBid,
+      bestAsk: spread.bestAsk,
+    };
+  }
+
+  try {
+    await redis.set(SPREAD_KEY, JSON.stringify(snapshot), { ex: SPREAD_TTL });
+    return { success: true, count: spreads.length };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Snapshots] Store spreads failed:', errorMessage);
+    return { success: false, count: 0, error: errorMessage };
+  }
+}
+
+/**
+ * Get cached spreads for all markets
+ */
+export async function getCachedSpreads(): Promise<Record<string, SpreadSnapshot> | null> {
+  return safeRedis(
+    async () => {
+      const data = await redis.get<string>(SPREAD_KEY);
+      if (!data) return null;
+      return typeof data === 'string' ? JSON.parse(data) : data;
+    },
+    null
+  );
 }

@@ -164,3 +164,42 @@ export function getPlatformColor(platform: Platform): string {
 export function cn(...classes: (string | undefined | false)[]): string {
   return classes.filter(Boolean).join(' ');
 }
+
+/**
+ * Sanitize username from Polymarket API
+ * Some usernames come as "0xaddress-timestamp" format which is malformed
+ * Returns clean display name or formatted address
+ */
+export function sanitizeUsername(
+  userName: string | undefined | null,
+  address?: string,
+  fallback?: string
+): string {
+  const defaultFallback = fallback || 'Unknown';
+
+  if (!userName) {
+    // No username - use address shorthand if available
+    if (address && address.startsWith('0x') && address.length >= 10) {
+      return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    }
+    return defaultFallback;
+  }
+
+  // Check for malformed username pattern: 0x...address-timestamp
+  // e.g., "0x13414A77a4be48988851c73dFD824d0168E70853-1762665053624"
+  if (/^0x[a-fA-F0-9]+-\d+$/.test(userName)) {
+    // Extract just the address part before the hyphen
+    const addressPart = userName.split('-')[0];
+    if (addressPart.length >= 10) {
+      return `${addressPart.slice(0, 6)}...${addressPart.slice(-4)}`;
+    }
+    return defaultFallback;
+  }
+
+  // Check if it's just a raw address (no timestamp but still 0x...)
+  if (/^0x[a-fA-F0-9]{40,}$/.test(userName)) {
+    return `${userName.slice(0, 6)}...${userName.slice(-4)}`;
+  }
+
+  return userName;
+}

@@ -121,10 +121,11 @@ export default function NewsClient({ initialNews }: NewsClientProps) {
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as NewsCategory)}
-                className="px-3 py-1.5 bg-card border border-border rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 bg-background border border-border rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent [&>option]:bg-background [&>option]:text-text-primary"
+                style={{ colorScheme: 'dark' }}
               >
                 {NEWS_CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
+                  <option key={cat.value} value={cat.value} className="bg-background text-white">{cat.label}</option>
                 ))}
               </select>
 
@@ -304,7 +305,11 @@ export default function NewsClient({ initialNews }: NewsClientProps) {
                   <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
-                  <p>No related markets found</p>
+                  <p className="font-medium text-text-primary mb-1">Related Markets</p>
+                  <p className="text-sm">Coming soon</p>
+                  <span className="inline-block mt-3 px-2 py-1 text-xs bg-accent/20 text-accent rounded-full">
+                    Soon
+                  </span>
                 </div>
               )}
 

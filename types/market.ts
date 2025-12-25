@@ -23,6 +23,9 @@ export interface MarketOutcome {
   volume24h: number;
 }
 
+// Tradability status based on spread + depth
+export type TradabilityStatus = 'excellent' | 'good' | 'fair' | 'poor' | 'unknown';
+
 export interface Market {
   id: string;
   name: string;
@@ -43,6 +46,12 @@ export interface Market {
   outcomes?: MarketOutcome[];
   // Trending score (calculated from volume spike + price movement + recency)
   trendingScore?: number;
+  // Liquidity metrics (from CLOB order book)
+  spread?: number;              // Bid-ask spread as decimal (0.02 = 2%)
+  spreadPercent?: number;       // Spread as percentage (2.0)
+  depth1Pct?: number;           // Volume available within 1% of mid-price
+  tradabilityScore?: number;    // 0-10 composite score
+  tradabilityStatus?: TradabilityStatus;
 }
 
 // Extended market data for detail page

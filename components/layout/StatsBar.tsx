@@ -78,7 +78,7 @@ export default function StatsBar({ stats }: StatsBarProps) {
             className="px-4 py-1.5 text-sm font-medium rounded-lg transition-colors"
             style={{ backgroundColor: '#00D4AA', color: '#0a0a0a' }}
           >
-            Login
+            Connect
           </button>
         )}
       </div>

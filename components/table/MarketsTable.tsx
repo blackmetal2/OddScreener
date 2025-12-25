@@ -99,6 +99,45 @@ function getEndsColor(endsAt: Date): string {
   return 'text-green-500';                                 // > 7 days
 }
 
+// Tradability badge component
+function TradabilityBadge({ market }: { market: Market }) {
+  const spread = market.spreadPercent;
+  const prob = market.probability;
+
+  // Don't show spread for:
+  // 1. Settled markets (prob <= 0 or >= 100)
+  // 2. Broken spread data (> 50% is clearly garbage)
+  const isSettled = prob <= 0 || prob >= 100;
+  const isBrokenSpread = spread !== undefined && spread > 50;
+  const shouldHideSpread = isSettled || isBrokenSpread;
+
+  if (shouldHideSpread) {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono text-text-muted bg-text-muted/10">
+        <span>-</span>
+      </span>
+    );
+  }
+
+  const status = market.tradabilityStatus || 'unknown';
+  const config = {
+    excellent: { icon: '✓', color: 'text-green-400', bg: 'bg-green-500/10' },
+    good: { icon: '✓', color: 'text-green-400', bg: 'bg-green-500/10' },
+    fair: { icon: '⚠', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+    poor: { icon: '✗', color: 'text-red-400', bg: 'bg-red-500/10' },
+    unknown: { icon: '?', color: 'text-text-muted', bg: 'bg-text-muted/10' },
+  };
+
+  const { icon, color, bg } = config[status];
+
+  return (
+    <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono', color, bg)}>
+      <span>{icon}</span>
+      <span>{spread !== undefined ? `${spread.toFixed(1)}%` : '-'}</span>
+    </span>
+  );
+}
+
 
 export default function MarketsTable({ markets, sortColumn, sortDirection, onSort, startIndex = 0 }: MarketsTableProps) {
   const router = useRouter();
@@ -128,10 +167,11 @@ export default function MarketsTable({ markets, sortColumn, sortDirection, onSor
             <SortableHeader column="change24h" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[8%]">
               24H
             </SortableHeader>
-            <SortableHeader column="volume" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[11%]">
+            <SortableHeader column="volume" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[10%]">
               Volume
             </SortableHeader>
-            <SortableHeader column="ends" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[10%]">
+            <th className="py-3 px-2 text-right font-medium w-[8%] text-text-secondary">Spread</th>
+            <SortableHeader column="ends" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} width="w-[8%]">
               Ends
             </SortableHeader>
           </tr>
@@ -244,6 +284,11 @@ export default function MarketsTable({ markets, sortColumn, sortDirection, onSor
                 <span className="font-mono text-sm text-text-primary">
                   {formatNumber(market.volume24h)}
                 </span>
+              </td>
+
+              {/* Spread/Tradability */}
+              <td className="py-3 px-2 text-right">
+                <TradabilityBadge market={market} />
               </td>
 
               {/* Ends */}
