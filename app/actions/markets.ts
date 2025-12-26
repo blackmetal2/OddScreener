@@ -16,6 +16,10 @@ import {
   hasSufficientMarkets,
 } from '@/lib/cache/markets-cache';
 import {
+  readMarketsFromKV,
+  writeMarketsToKV,
+} from '@/lib/cache/markets-kv';
+import {
   Market,
   MarketDetail,
   MarketTrade,
@@ -29,40 +33,41 @@ import {
   FilterState,
 } from '@/types/market';
 
-const EXPECTED_MARKET_LIMIT = 2000;
+const EXPECTED_MARKET_LIMIT = 10000; // Increased from 2000 to support 10K+ markets
 
 /**
- * Get markets from cache, refresh if needed
+ * Get markets from cache (KV first, then file fallback)
+ * Cron job refreshes cache every 5 minutes - we just read here
  */
 async function getMarketsFromCache(): Promise<Market[]> {
-  // Try to read from cache
-  const cache = await readMarketsCache();
+  // Try KV cache first (primary)
+  const kvData = await readMarketsFromKV();
+  if (kvData && kvData.markets.length > 0) {
+    console.log(`[Markets] Using KV cache (${kvData.markets.length} markets)`);
+    return kvData.markets;
+  }
 
-  // Use cache only if: exists, not stale, AND has enough markets (75%+ of expected)
+  // Fallback to file cache
+  const cache = await readMarketsCache();
   if (cache && !isCacheStale(cache) && hasSufficientMarkets(cache, EXPECTED_MARKET_LIMIT)) {
-    console.log(`[Markets] Using cache (${cache.markets.length} markets)`);
+    console.log(`[Markets] Using file cache (${cache.markets.length} markets)`);
     return cache.markets;
   }
 
-  // Log reason for cache miss
-  if (cache && !isCacheStale(cache) && !hasSufficientMarkets(cache, EXPECTED_MARKET_LIMIT)) {
-    console.log(`[Markets] Cache has insufficient markets (${cache.markets.length}/${EXPECTED_MARKET_LIMIT}) - refreshing...`);
-  } else {
-    console.log('[Markets] Cache miss - fetching fresh data...');
-  }
-
+  // Last resort: fetch directly from API (should rarely happen)
+  console.log('[Markets] No cache available - fetching from API...');
   const markets = await getAllMarkets(EXPECTED_MARKET_LIMIT, false);
 
-  // Calculate stats and write to cache
+  // Calculate stats and write to both caches in background
   const stats: GlobalStats = {
     totalVolume24h: markets.reduce((sum, m) => sum + m.volume24h, 0),
     openPositions24h: Math.round(markets.reduce((sum, m) => sum + m.volume24h, 0) / 100),
     activeMarkets: markets.filter((m) => new Date(m.endsAt) > new Date()).length,
   };
 
-  // Write cache in background (don't await) - include limit for future checks
-  writeMarketsCache(markets, stats, EXPECTED_MARKET_LIMIT).catch((e) =>
-    console.error('[Markets] Cache write failed:', e)
+  // Write to KV and file cache in background
+  writeMarketsToKV(markets, stats, EXPECTED_MARKET_LIMIT).catch((e) =>
+    console.error('[Markets] KV cache write failed:', e)
   );
 
   return markets;
@@ -276,6 +281,67 @@ import {
 } from '@/lib/api/polymarket';
 
 /**
+ * Infer market category from slug and title
+ */
+function inferCategoryFromSlug(slug: string, title: string = ''): Category {
+  const s = (slug + ' ' + title).toLowerCase();
+
+  // Politics
+  if (s.includes('trump') || s.includes('biden') || s.includes('election') ||
+      s.includes('senate') || s.includes('congress') || s.includes('governor') ||
+      s.includes('president') || s.includes('political') || s.includes('vote') ||
+      s.includes('democrat') || s.includes('republican') || s.includes('poll')) {
+    return 'politics';
+  }
+
+  // Sports
+  if (s.includes('nba') || s.includes('nfl') || s.includes('ufc') || s.includes('mlb') ||
+      s.includes('nhl') || s.includes('soccer') || s.includes('football') ||
+      s.includes('basketball') || s.includes('tennis') || s.includes('golf') ||
+      s.includes('f1') || s.includes('formula') || s.includes('racing') ||
+      s.includes('super bowl') || s.includes('world series') || s.includes('championship') ||
+      s.includes('playoffs') || s.includes('match') || s.includes('game ')) {
+    return 'sports';
+  }
+
+  // Crypto
+  if (s.includes('bitcoin') || s.includes('btc') || s.includes('ethereum') || s.includes('eth') ||
+      s.includes('crypto') || s.includes('solana') || s.includes('sol') ||
+      s.includes('token') || s.includes('defi') || s.includes('nft') ||
+      s.includes('binance') || s.includes('coinbase')) {
+    return 'crypto';
+  }
+
+  // Finance
+  if (s.includes('stock') || s.includes('nasdaq') || s.includes('s&p') || s.includes('dow') ||
+      s.includes('fed') || s.includes('interest rate') || s.includes('inflation') ||
+      s.includes('gdp') || s.includes('earnings') || s.includes('ipo') ||
+      s.includes('tesla') || s.includes('apple') || s.includes('nvidia') ||
+      s.includes('market cap') || s.includes('price target')) {
+    return 'finance';
+  }
+
+  // Tech
+  if (s.includes('ai') || s.includes('openai') || s.includes('chatgpt') || s.includes('google') ||
+      s.includes('meta') || s.includes('microsoft') || s.includes('amazon') ||
+      s.includes('twitter') || s.includes('tiktok') || s.includes('app store') ||
+      s.includes('iphone') || s.includes('android') || s.includes('launch')) {
+    return 'tech';
+  }
+
+  // Culture/Entertainment
+  if (s.includes('oscar') || s.includes('grammy') || s.includes('emmy') ||
+      s.includes('movie') || s.includes('film') || s.includes('album') ||
+      s.includes('celebrity') || s.includes('kardashian') || s.includes('music') ||
+      s.includes('taylor swift') || s.includes('concert') || s.includes('tour')) {
+    return 'culture';
+  }
+
+  // Default to world/general
+  return 'world';
+}
+
+/**
  * Transform Polymarket position to our TraderPosition type
  */
 function transformPosition(pos: PolymarketUserPosition): TraderPosition {
@@ -294,6 +360,7 @@ function transformPosition(pos: PolymarketUserPosition): TraderPosition {
     unrealizedPnl: pos.cashPnl - pos.realizedPnl,
     overallPnl: pos.cashPnl,
     resolved: pos.redeemable || pos.mergeable,
+    category: inferCategoryFromSlug(pos.eventSlug || pos.slug, pos.title),
   };
 }
 
@@ -325,6 +392,7 @@ function transformTrade(trade: PolymarketUserTrade): TraderTrade {
     value: trade.usdcSize,
     price: trade.price,
     shares: trade.size,
+    category: inferCategoryFromSlug(trade.slug, trade.title),
   };
 }
 
@@ -368,6 +436,7 @@ function transformClosedPosition(pos: PolymarketClosedPosition): TraderClosedPos
     totalBought: pos.totalBought,
     realizedPnl: pos.realizedPnl,
     closedAt: new Date(pos.timestamp * 1000),
+    category: inferCategoryFromSlug(pos.slug, pos.title),
   };
 }
 
