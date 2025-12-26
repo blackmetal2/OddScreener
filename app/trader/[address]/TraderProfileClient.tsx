@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { TraderProfile, TraderPosition, TraderTrade, TraderClosedPosition } from '@/types/market';
 import { TokenTransfer, getPolygonscanAddressUrl, getPolygonscanTxUrl } from '@/lib/api/polygonscan';
 import { formatNumber, formatCompactNumber, cn } from '@/lib/utils';
+import PnLChart from '@/components/charts/PnLChart';
 
 interface TraderProfileClientProps {
   address: string;
@@ -16,6 +17,7 @@ interface TraderProfileClientProps {
 }
 
 type TabType = 'overview' | 'positions' | 'trades' | 'transfers';
+type TimeFilter = '7d' | '30d' | 'all';
 
 export default function TraderProfileClient({
   address,
@@ -28,38 +30,61 @@ export default function TraderProfileClient({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [tradesPage, setTradesPage] = useState(1);
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
   const tradesPerPage = 20;
 
-  // Calculate stats from positions + closed positions (more accurate)
-  const stats = useMemo(() => {
-    // Total PnL = cashPnl from open positions + realizedPnl from closed positions
-    // cashPnl = currentValue - initialValue (unrealized P&L for open positions)
-    const openPositionsPnl = positions.reduce((sum, p) => sum + p.overallPnl, 0);
-    const closedPositionsPnl = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0);
+  // Filter trades by time period
+  const filteredTrades = useMemo(() => {
+    if (timeFilter === 'all') return trades;
 
-    // Use leaderboard P&L if available (most accurate), otherwise calculate
-    const totalPnl = profile?.pnl || (openPositionsPnl + closedPositionsPnl);
+    const now = Date.now();
+    const cutoffMs = timeFilter === '7d'
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000;
+    const cutoff = now - cutoffMs;
+
+    return trades.filter(t => t.timestamp.getTime() >= cutoff);
+  }, [trades, timeFilter]);
+
+  // Filter closed positions by time period
+  const filteredClosedPositions = useMemo(() => {
+    if (timeFilter === 'all') return closedPositions;
+
+    const now = Date.now();
+    const cutoffMs = timeFilter === '7d'
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000;
+    const cutoff = now - cutoffMs;
+
+    return closedPositions.filter(p => p.closedAt.getTime() >= cutoff);
+  }, [closedPositions, timeFilter]);
+
+  // Calculate stats from closed positions ONLY for gains/losses (to avoid double-counting)
+  // positions.cashPnl already includes realized P&L, so we can't add closedPositions.realizedPnl
+  const stats = useMemo(() => {
+    const relevantClosedPositions = timeFilter === 'all' ? closedPositions : filteredClosedPositions;
+
+    // Total PnL: Use leaderboard (most accurate) for all-time, otherwise calculate from closed only
+    const closedPositionsPnl = relevantClosedPositions.reduce((sum, p) => sum + p.realizedPnl, 0);
+    const totalPnl = timeFilter === 'all' && profile?.pnl
+      ? profile.pnl
+      : closedPositionsPnl;
 
     // Current portfolio value (open positions only)
     const totalValue = positions.reduce((sum, p) => sum + p.currentValue, 0);
 
-    // Gains from open positions with positive P&L
-    const openGains = positions.filter(p => p.overallPnl > 0).reduce((sum, p) => sum + p.overallPnl, 0);
-    // Gains from closed positions with positive realized P&L
-    const closedGains = closedPositions.filter(p => p.realizedPnl > 0).reduce((sum, p) => sum + p.realizedPnl, 0);
-    const totalGains = openGains + closedGains;
+    // REALIZED Gains/Losses - ONLY from closed positions (avoid double-counting with open positions)
+    const realizedGains = relevantClosedPositions.filter(p => p.realizedPnl > 0).reduce((sum, p) => sum + p.realizedPnl, 0);
+    const realizedLosses = relevantClosedPositions.filter(p => p.realizedPnl < 0).reduce((sum, p) => sum + Math.abs(p.realizedPnl), 0);
 
-    // Losses from open positions with negative P&L
-    const openLosses = positions.filter(p => p.overallPnl < 0).reduce((sum, p) => sum + Math.abs(p.overallPnl), 0);
-    // Losses from closed positions with negative realized P&L
-    const closedLosses = closedPositions.filter(p => p.realizedPnl < 0).reduce((sum, p) => sum + Math.abs(p.realizedPnl), 0);
-    const totalLosses = openLosses + closedLosses;
+    // Win rate: Only from closed positions (finalized outcomes)
+    const closedWins = relevantClosedPositions.filter(p => p.realizedPnl > 0).length;
+    const closedLosses = relevantClosedPositions.filter(p => p.realizedPnl < 0).length;
+    const totalClosedCount = relevantClosedPositions.length;
+    const winRate = totalClosedCount > 0 ? (closedWins / totalClosedCount) * 100 : 0;
 
-    // Win rate: positions with positive P&L / total positions
-    const openWins = positions.filter(p => p.overallPnl > 0).length;
-    const closedWins = closedPositions.filter(p => p.realizedPnl > 0).length;
-    const totalPositionsCount = positions.length + closedPositions.length;
-    const winRate = totalPositionsCount > 0 ? ((openWins + closedWins) / totalPositionsCount) * 100 : 0;
+    // Profit Factor = Realized Gains / Realized Losses
+    const profitFactor = realizedLosses > 0 ? realizedGains / realizedLosses : realizedGains > 0 ? Infinity : 0;
 
     const activePositions = positions.filter(p => !p.resolved && p.currentValue > 0);
 
@@ -67,19 +92,24 @@ export default function TraderProfileClient({
     const totalWithdrawals = transfers.filter(t => t.type === 'withdrawal').reduce((sum, t) => sum + t.amount, 0);
     const netDeposits = totalDeposits - totalWithdrawals;
 
+    // Trade count for the period
+    const tradeCount = filteredTrades.length;
+
     return {
       totalPnl,
-      totalGains,
-      totalLosses,
+      totalGains: realizedGains,
+      totalLosses: realizedLosses,
       winRate,
+      profitFactor,
       totalValue,
       activePositions: activePositions.length,
-      totalPositionsCount,
+      totalPositionsCount: totalClosedCount,
       totalDeposits,
       totalWithdrawals,
       netDeposits,
+      tradeCount,
     };
-  }, [positions, closedPositions, transfers, profile]);
+  }, [positions, closedPositions, filteredClosedPositions, filteredTrades, transfers, profile, timeFilter]);
 
   // Top markets by PnL (combine open and closed positions)
   const topWins = useMemo(() => {
@@ -104,6 +134,44 @@ export default function TraderProfileClient({
     return [...openLosses, ...closedLosses]
       .sort((a, b) => a.pnl - b.pnl)
       .slice(0, 5);
+  }, [positions, closedPositions]);
+
+  // Category breakdown stats
+  const categoryStats = useMemo(() => {
+    const statsMap = new Map<string, { wins: number; losses: number; totalPnl: number; count: number }>();
+
+    // Process open positions
+    positions.forEach(p => {
+      const cat = p.category || 'world';
+      const current = statsMap.get(cat) || { wins: 0, losses: 0, totalPnl: 0, count: 0 };
+      statsMap.set(cat, {
+        wins: current.wins + (p.overallPnl > 0 ? 1 : 0),
+        losses: current.losses + (p.overallPnl < 0 ? 1 : 0),
+        totalPnl: current.totalPnl + p.overallPnl,
+        count: current.count + 1,
+      });
+    });
+
+    // Process closed positions
+    closedPositions.forEach(p => {
+      const cat = p.category || 'world';
+      const current = statsMap.get(cat) || { wins: 0, losses: 0, totalPnl: 0, count: 0 };
+      statsMap.set(cat, {
+        wins: current.wins + (p.realizedPnl > 0 ? 1 : 0),
+        losses: current.losses + (p.realizedPnl < 0 ? 1 : 0),
+        totalPnl: current.totalPnl + p.realizedPnl,
+        count: current.count + 1,
+      });
+    });
+
+    // Convert to array and calculate derived stats
+    return [...statsMap.entries()]
+      .map(([category, data]) => ({
+        category,
+        ...data,
+        winRate: data.count > 0 ? ((data.wins / data.count) * 100) : 0,
+      }))
+      .sort((a, b) => b.totalPnl - a.totalPnl);
   }, [positions, closedPositions]);
 
   // Paginated trades
@@ -171,10 +239,39 @@ export default function TraderProfileClient({
 
       {/* Stats Cards */}
       <div className="px-6 py-4 border-b border-border bg-surface">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        {/* Time Filter Toggle */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs text-text-muted mr-2">Period:</span>
+          {(['7d', '30d', 'all'] as TimeFilter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setTimeFilter(f)}
+              className={cn(
+                'px-3 py-1 text-xs font-medium rounded-lg transition-colors',
+                timeFilter === f
+                  ? 'bg-accent text-white'
+                  : 'bg-surface-hover text-text-secondary hover:text-text-primary'
+              )}
+            >
+              {f === 'all' ? 'All Time' : f.toUpperCase()}
+            </button>
+          ))}
+          {timeFilter !== 'all' && (
+            <span className="text-xs text-text-muted ml-2">
+              ({stats.tradeCount} trades in period)
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
           <StatCard label="Total PnL" value={stats.totalPnl} isCurrency colored />
-          <StatCard label="Total Gains" value={stats.totalGains} isCurrency positive />
-          <StatCard label="Total Losses" value={-stats.totalLosses} isCurrency negative />
+          <StatCard label="Realized Gains" value={stats.totalGains} isCurrency positive />
+          <StatCard label="Realized Losses" value={-stats.totalLosses} isCurrency negative />
+          <StatCard
+            label="Profit Factor"
+            value={stats.profitFactor === Infinity ? 999 : stats.profitFactor}
+            suffix="x"
+            colored
+          />
           <StatCard label="Win Rate" value={stats.winRate} suffix="%" />
           <StatCard label="Portfolio Value" value={stats.totalValue} isCurrency />
           <StatCard label="Positions" value={stats.activePositions} />
@@ -206,6 +303,12 @@ export default function TraderProfileClient({
       <div className="p-6">
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* P&L Chart */}
+            <div className="bg-surface rounded-xl border border-border p-4 lg:col-span-2">
+              <h3 className="text-sm font-medium text-text-secondary mb-3">Cumulative P&L Over Time</h3>
+              <PnLChart trades={trades} />
+            </div>
+
             {/* Top Wins */}
             <div className="bg-surface rounded-xl border border-border p-4">
               <h3 className="text-sm font-medium text-text-secondary mb-3">Biggest Wins</h3>
@@ -243,6 +346,48 @@ export default function TraderProfileClient({
                 </div>
               ) : (
                 <p className="text-sm text-text-muted py-4 text-center">No losing positions</p>
+              )}
+            </div>
+
+            {/* Category Breakdown */}
+            <div className="bg-surface rounded-xl border border-border p-4 lg:col-span-2">
+              <h3 className="text-sm font-medium text-text-secondary mb-3">Performance by Category</h3>
+              {categoryStats.length > 0 ? (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {categoryStats.map((cat) => (
+                    <div key={cat.category} className="bg-background rounded-lg p-3 border border-border/50">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium text-text-secondary capitalize">{cat.category}</span>
+                        <span className="text-xs text-text-muted">{cat.count} pos</span>
+                      </div>
+                      <div className={cn(
+                        'text-lg font-mono font-semibold mb-1',
+                        cat.totalPnl >= 0 ? 'text-positive' : 'text-negative'
+                      )}>
+                        {cat.totalPnl >= 0 ? '+' : ''}{formatNumber(cat.totalPnl)}
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-text-muted">Win Rate</span>
+                        <span className={cn(
+                          'font-medium',
+                          cat.winRate >= 50 ? 'text-positive' : 'text-negative'
+                        )}>
+                          {cat.winRate.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-1">
+                        <span className="text-text-muted">W/L</span>
+                        <span className="text-text-secondary">
+                          <span className="text-positive">{cat.wins}</span>
+                          /
+                          <span className="text-negative">{cat.losses}</span>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-text-muted py-4 text-center">No category data available</p>
               )}
             </div>
 

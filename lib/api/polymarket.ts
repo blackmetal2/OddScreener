@@ -755,6 +755,9 @@ export async function fetchUserPositions(
   limit: number = 100
 ): Promise<PolymarketUserPosition[]> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     const params = new URLSearchParams({
       user: address.toLowerCase(),
       limit: limit.toString(),
@@ -764,17 +767,25 @@ export async function fetchUserPositions(
 
     const response = await fetch(`${DATA_API_BASE}/positions?${params}`, {
       cache: 'no-store', // Fresh data for trader profiles
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
-      console.error(`Polymarket positions API error: ${response.status}`);
+      console.warn(`[Polymarket] Positions API returned ${response.status} for ${address.slice(0, 8)}...`);
       return [];
     }
 
     const data: PolymarketUserPosition[] = await response.json();
     return data || [];
   } catch (error) {
-    console.error('Error fetching user positions:', error);
+    // Network errors are expected sometimes - use warn instead of error
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('fetch'))) {
+      console.warn(`[Polymarket] Positions fetch failed for ${address.slice(0, 8)}... (network issue)`);
+    } else {
+      console.warn('[Polymarket] Positions fetch error:', error);
+    }
     return [];
   }
 }
@@ -787,43 +798,78 @@ export async function fetchUserPositions(
  */
 export async function fetchClosedPositions(
   address: string,
-  limit: number = 500
+  limit: number = 300
 ): Promise<PolymarketClosedPosition[]> {
   try {
-    const allPositions: PolymarketClosedPosition[] = [];
     const perPage = 50; // API max is 50
-    const pages = Math.ceil(limit / perPage);
+    const pagesPerDirection = Math.ceil(limit / 2 / perPage); // Split limit between both directions
 
-    for (let i = 0; i < pages; i++) {
-      const params = new URLSearchParams({
-        user: address.toLowerCase(),
-        limit: perPage.toString(),
-        offset: (i * perPage).toString(),
-        sortBy: 'REALIZEDPNL',
-        sortDirection: 'DESC',
-      });
+    // Build all fetch requests upfront for parallel execution
+    const fetchRequests: Promise<PolymarketClosedPosition[]>[] = [];
 
-      const response = await fetch(`${DATA_API_BASE}/closed-positions?${params}`, {
-        cache: 'no-store', // Fresh data for trader profiles
-      });
+    for (const direction of ['DESC', 'ASC'] as const) {
+      for (let i = 0; i < pagesPerDirection; i++) {
+        const params = new URLSearchParams({
+          user: address.toLowerCase(),
+          limit: perPage.toString(),
+          offset: (i * perPage).toString(),
+          sortBy: 'REALIZEDPNL',
+          sortDirection: direction,
+        });
 
-      if (!response.ok) {
-        console.error(`Polymarket closed positions API error: ${response.status}`);
-        break;
+        // Create promise for each page fetch
+        const fetchPromise = (async (): Promise<PolymarketClosedPosition[]> => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+          try {
+            const response = await fetch(`${DATA_API_BASE}/closed-positions?${params}`, {
+              cache: 'no-store',
+              signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+              console.warn(`[Polymarket] Closed positions API returned ${response.status}`);
+              return [];
+            }
+
+            return await response.json() || [];
+          } catch {
+            clearTimeout(timeoutId);
+            return [];
+          }
+        })();
+
+        fetchRequests.push(fetchPromise);
       }
+    }
 
-      const data: PolymarketClosedPosition[] = await response.json();
-      if (!data || data.length === 0) break;
+    // Execute ALL requests in parallel
+    const results = await Promise.all(fetchRequests);
 
-      allPositions.push(...data);
+    // Deduplicate results
+    const seenIds = new Set<string>();
+    const allPositions: PolymarketClosedPosition[] = [];
 
-      // Stop if we got fewer than requested (no more pages)
-      if (data.length < perPage) break;
+    for (const pageResults of results) {
+      for (const pos of pageResults) {
+        const key = `${pos.conditionId}-${pos.outcome}`;
+        if (!seenIds.has(key)) {
+          seenIds.add(key);
+          allPositions.push(pos);
+        }
+      }
     }
 
     return allPositions;
   } catch (error) {
-    console.error('Error fetching closed positions:', error);
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('fetch'))) {
+      console.warn(`[Polymarket] Closed positions fetch failed for ${address.slice(0, 8)}... (network issue)`);
+    } else {
+      console.warn('[Polymarket] Closed positions fetch error:', error);
+    }
     return [];
   }
 }
@@ -831,13 +877,16 @@ export async function fetchClosedPositions(
 /**
  * Fetch user trade activity from Polymarket Data API
  * @param address - User wallet address
- * @param limit - Maximum trades to return (default 1000 for accurate P&L)
+ * @param limit - Maximum trades to return (default 200 for faster loads)
  */
 export async function fetchUserTrades(
   address: string,
-  limit: number = 1000
+  limit: number = 200
 ): Promise<PolymarketUserTrade[]> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     const params = new URLSearchParams({
       user: address.toLowerCase(),
       limit: limit.toString(),
@@ -845,17 +894,25 @@ export async function fetchUserTrades(
 
     const response = await fetch(`${DATA_API_BASE}/activity?${params}`, {
       cache: 'no-store', // Fresh data for trader profiles
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
-      console.error(`Polymarket activity API error: ${response.status}`);
+      console.warn(`[Polymarket] Activity API returned ${response.status} for ${address.slice(0, 8)}...`);
       return [];
     }
 
     const data: PolymarketUserTrade[] = await response.json();
     return data || [];
   } catch (error) {
-    console.error('Error fetching user trades:', error);
+    // Network errors are expected sometimes - use warn instead of error
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('fetch'))) {
+      console.warn(`[Polymarket] Activity fetch failed for ${address.slice(0, 8)}... (network issue)`);
+    } else {
+      console.warn('[Polymarket] Activity fetch error:', error);
+    }
     return [];
   }
 }
@@ -911,6 +968,9 @@ export async function fetchTraderProfile(
   profileImage?: string;
 } | null> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     // Fetch all-time leaderboard for this specific user
     const userParams = new URLSearchParams({
       timePeriod: 'ALL',
@@ -919,8 +979,10 @@ export async function fetchTraderProfile(
 
     const userResponse = await fetch(
       `${DATA_API_BASE}/v1/leaderboard?${userParams}`,
-      { cache: 'no-store' } // Fresh data for trader profiles
+      { cache: 'no-store', signal: controller.signal }
     );
+
+    clearTimeout(timeoutId);
 
     if (userResponse.ok) {
       const userData = await userResponse.json();
@@ -944,7 +1006,12 @@ export async function fetchTraderProfile(
       volume: 0,
     };
   } catch (error) {
-    console.error('Error fetching trader profile:', error);
+    // Network errors are expected sometimes - use warn instead of error
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('fetch'))) {
+      console.warn(`[Polymarket] Profile fetch failed for ${address.slice(0, 8)}... (network issue)`);
+    } else {
+      console.warn('[Polymarket] Profile fetch error:', error);
+    }
     return null;
   }
 }

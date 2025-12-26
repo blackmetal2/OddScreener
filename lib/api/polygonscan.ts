@@ -105,16 +105,16 @@ export async function fetchWalletTokenTransfers(
     const response = await rateLimitedFetch(url.toString());
 
     if (!response.ok) {
-      console.error('Polygonscan API error:', response.status);
+      console.warn(`[Polygonscan] API returned ${response.status} for ${walletAddress.slice(0, 8)}...`);
       return [];
     }
 
     const data: PolygonscanResponse = await response.json();
 
     if (data.status !== '1' || typeof data.result === 'string') {
-      // API returned error or no results
+      // API returned error or no results - this is common, use warn
       if (data.message !== 'No transactions found') {
-        console.error('Polygonscan API error:', data.message);
+        console.warn(`[Polygonscan] API message: ${data.message}`);
       }
       return [];
     }
@@ -137,7 +137,12 @@ export async function fetchWalletTokenTransfers(
       };
     });
   } catch (error) {
-    console.error('Error fetching token transfers:', error);
+    // Network errors are expected sometimes - use warn instead of error
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('fetch'))) {
+      console.warn(`[Polygonscan] Token transfers fetch failed for ${walletAddress.slice(0, 8)}... (network issue)`);
+    } else {
+      console.warn('[Polygonscan] Token transfers fetch error:', error);
+    }
     return [];
   }
 }
