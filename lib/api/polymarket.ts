@@ -6,6 +6,9 @@ import {
   PolymarketPricePoint,
   PolymarketTokenHolders,
 } from './types';
+
+// Re-export types needed by other modules
+export type { PolymarketMarket };
 import { sanitizeUsername } from '@/lib/utils';
 
 const GAMMA_API_BASE = 'https://gamma-api.polymarket.com';

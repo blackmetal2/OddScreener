@@ -1,9 +1,42 @@
 import { NextResponse } from 'next/server';
 import { writeMarketsToKV, getMarketsCacheStatus } from '@/lib/cache/markets-kv';
-import { fetchPolymarketMarketsWithPagination, parsePolymarketOutcomes } from '@/lib/api/polymarket';
+import { fetchPolymarketMarketsWithPagination, parsePolymarketOutcomes, PolymarketMarket } from '@/lib/api/polymarket';
 import { getBatchMarketPriceChanges } from '@/lib/api/snapshots';
 import { getKVStatus } from '@/lib/cloudflare-kv';
 import { Market, GlobalStats, Category } from '@/types/market';
+
+/**
+ * Calculate trending score for a market
+ * Higher score = more trending (volume spike + price movement + recency)
+ */
+function calculateTrendingScore(pm: PolymarketMarket): number {
+  const volume24h = pm.volume24hrNum || pm.volume24hr || 0;
+  const volume7d = pm.volume1wk || 0;
+  const priceChange = Math.abs(pm.oneDayPriceChange || 0);
+  const liquidity = pm.liquidityNum || pm.liquidity || 0;
+  const createdAt = new Date(pm.createdAt);
+  const hoursOld = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60);
+
+  // Minimum volume threshold - no trending for garbage markets
+  if (volume24h < 5000) return 0;
+
+  // 1. Volume Spike (40% weight)
+  const dailyAvg7d = volume7d > 0 ? volume7d / 7 : volume24h;
+  const volumeSpike = Math.min(volume24h / dailyAvg7d, 10);
+  const volumeScore = volumeSpike * 4; // 0-40 points
+
+  // 2. Volume-Weighted Price Movement (30% weight)
+  const volumeRatio = Math.min(volume24h / 100000, 1);
+  const priceScore = priceChange * volumeRatio * 100 * 3; // 0-30 points
+
+  // 3. Liquidity Quality (20% weight)
+  const liquidityScore = Math.min(liquidity / 500000, 1) * 20; // 0-20 points
+
+  // 4. Recency Boost (10% weight)
+  const recencyScore = Math.max(0, 1 - hoursOld / 720) * 10; // 0-10 points
+
+  return Math.round(volumeScore + priceScore + liquidityScore + recencyScore);
+}
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // Allow up to 2 minutes for fetching 10K markets
@@ -52,12 +85,13 @@ export async function GET(request: Request) {
     const priceChanges = await getBatchMarketPriceChanges(marketsForPriceChange);
     console.log(`[Refresh Markets] Got price changes for ${priceChanges.size} markets`);
 
-    // Transform to Market type
+    // Transform to Market type (with trendingScore calculation)
     const markets: Market[] = rawMarkets.map((pm) => {
       const { outcomes, prices } = parsePolymarketOutcomes(pm);
       const changes = priceChanges.get(pm.id) || { change1h: 0, change6h: 0, change24h: 0 };
       const isMultiOutcome = outcomes.length > 2;
       const tagLabels = pm.tags?.map(t => t.label).join(' ') || '';
+      const trendingScore = calculateTrendingScore(pm);
 
       return {
         id: pm.id,
@@ -75,6 +109,7 @@ export async function GET(request: Request) {
         createdAt: new Date(pm.createdAt || Date.now()),
         imageUrl: pm.image || pm.icon,
         isHot: pm.featured || (pm.volume24hrNum || 0) > 1000000,
+        trendingScore,
       };
     });
 
