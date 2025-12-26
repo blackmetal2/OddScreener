@@ -19,6 +19,7 @@ import {
 } from '@/lib/utils';
 import VolumeFlowChart from '@/components/charts/VolumeFlowChart';
 import TradeScatterChart from '@/components/charts/TradeScatterChart';
+import OrderBookLadder from '@/components/charts/OrderBookLadder';
 import { processTradesForVolumeChart, VolumeMetric } from '@/lib/utils/volumeAggregator';
 
 type ChartView = 'line' | 'dots';
@@ -51,7 +52,7 @@ export default function MarketDetailClient({
   trades,
 }: MarketDetailClientProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'trades' | 'positions' | 'news'>('trades');
+  const [activeTab, setActiveTab] = useState<'trades' | 'orderbook' | 'positions' | 'news'>('trades');
   const [chartTimeframe, setChartTimeframe] = useState<'1h' | '6h' | '24h' | '7d' | '30d' | 'all'>('24h');
   const [volumeMetric, setVolumeMetric] = useState<VolumeMetric>('usd');
   const [chartView, setChartView] = useState<ChartView>('line');
@@ -564,6 +565,20 @@ export default function MarketDetailClient({
                 Trades
               </button>
               <button
+                onClick={() => setActiveTab('orderbook')}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors',
+                  activeTab === 'orderbook'
+                    ? 'bg-accent/20 text-accent'
+                    : 'text-text-secondary hover:text-text-primary'
+                )}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+                </svg>
+                Order Book
+              </button>
+              <button
                 onClick={() => setActiveTab('positions')}
                 className={cn(
                   'flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors',
@@ -696,75 +711,117 @@ export default function MarketDetailClient({
               </div>
             )}
 
+            {/* Order Book */}
+            {activeTab === 'orderbook' && (
+              <div className="p-6">
+                <OrderBookLadder
+                  clobTokenIds={market.clobTokenIds}
+                  outcomeName={market.outcomes?.[0]?.name || 'YES'}
+                />
+              </div>
+            )}
+
             {activeTab === 'positions' && (
-              <div>
+              <div className="p-4">
                 {holdersLoading ? (
                   <div className="p-8 text-center text-text-muted">
                     <div className="animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full mx-auto mb-2" />
                     <p>Loading top holders...</p>
                   </div>
                 ) : holders.length > 0 ? (
-                  <>
-                    {/* Sticky Header */}
-                    <div className="border-b border-border">
-                      <div className="px-4 py-3 flex items-center text-xs text-text-secondary font-medium uppercase tracking-wider">
-                        <span className="w-8">#</span>
-                        <span className="flex-1">Trader</span>
-                        <span className="w-20 text-right">Position</span>
-                        <span className="w-24 text-right">Shares</span>
-                      </div>
-                    </div>
-                    {/* Scrollable Body */}
-                    <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
-                      {holders.slice(0, 20).map((holder, index) => (
-                        <div
-                          key={holder.wallet}
-                          onClick={() => router.push(`/trader/${holder.wallet}`)}
-                          className="px-4 py-3 flex items-center border-b border-border/50 hover:bg-surface-hover/50 transition-colors cursor-pointer group"
-                        >
-                          <span className="w-8 text-text-secondary text-sm">{index + 1}</span>
-                          <div className="flex-1 flex items-center gap-2 min-w-0">
-                            {holder.profileImage ? (
-                              <img
-                                src={holder.profileImage}
-                                alt={holder.name}
-                                className="w-6 h-6 rounded-full"
-                              />
-                            ) : (
-                              <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs">
-                                {holder.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium truncate group-hover:text-accent transition-colors">{holder.name}</p>
-                              {holder.bio && (
-                                <p className="text-xs text-text-secondary truncate">{holder.bio}</p>
-                              )}
-                            </div>
-                            {/* Arrow icon to indicate clickable */}
-                            <svg className="w-4 h-4 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                            </svg>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* First Outcome Holders Column */}
+                    {(() => {
+                      const outcome1 = market.outcomes?.[0]?.name || 'Yes';
+                      const outcome1Holders = holders.filter((h) =>
+                        h.outcome.toLowerCase() === outcome1.toLowerCase()
+                      );
+                      return (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 pb-2 border-b border-border">
+                            <span className="px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-400 rounded truncate max-w-[100px]">{outcome1}</span>
+                            <span className="text-xs text-text-muted">Top Holders</span>
+                            <span className="text-xs text-text-muted ml-auto">Shares</span>
                           </div>
-                          <span
-                            className={cn(
-                              'w-20 text-right text-xs font-medium px-2 py-0.5 rounded',
-                              holder.outcome === 'YES' || holder.outcome === 'Yes'
-                                ? 'bg-green-500/20 text-green-400'
-                                : holder.outcome === 'NO' || holder.outcome === 'No'
-                                ? 'bg-red-500/20 text-red-400'
-                                : 'bg-accent/20 text-accent'
+                          <div className="max-h-[350px] overflow-y-auto custom-scrollbar space-y-1">
+                            {outcome1Holders
+                              .slice(0, 20)
+                              .map((holder, index) => (
+                                <div
+                                  key={holder.wallet}
+                                  onClick={() => router.push(`/trader/${holder.wallet}`)}
+                                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-surface-hover/50 transition-colors cursor-pointer group"
+                                >
+                                  <span className="w-5 text-xs text-text-muted">{index + 1}</span>
+                                  {holder.profileImage ? (
+                                    <img src={holder.profileImage} alt={holder.name} className="w-5 h-5 rounded-full" />
+                                  ) : (
+                                    <div className="w-5 h-5 rounded-full bg-green-500/20 flex items-center justify-center text-[10px] text-green-400">
+                                      {holder.name.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <span className="flex-1 text-sm truncate group-hover:text-accent transition-colors">
+                                    {holder.name}
+                                  </span>
+                                  <span className="text-xs font-mono text-green-400">
+                                    {formatCompactNumber(holder.amount)}
+                                  </span>
+                                </div>
+                              ))}
+                            {outcome1Holders.length === 0 && (
+                              <div className="text-center text-text-muted text-sm py-4">No {outcome1} holders</div>
                             )}
-                          >
-                            {holder.outcome}
-                          </span>
-                          <span className="w-24 text-right text-sm font-mono">
-                            {formatNumber(holder.amount)}
-                          </span>
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  </>
+                      );
+                    })()}
+
+                    {/* Second Outcome Holders Column */}
+                    {(() => {
+                      const outcome2 = market.outcomes?.[1]?.name || 'No';
+                      const outcome2Holders = holders.filter((h) =>
+                        h.outcome.toLowerCase() === outcome2.toLowerCase()
+                      );
+                      return (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 pb-2 border-b border-border">
+                            <span className="px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-400 rounded truncate max-w-[100px]">{outcome2}</span>
+                            <span className="text-xs text-text-muted">Top Holders</span>
+                            <span className="text-xs text-text-muted ml-auto">Shares</span>
+                          </div>
+                          <div className="max-h-[350px] overflow-y-auto custom-scrollbar space-y-1">
+                            {outcome2Holders
+                              .slice(0, 20)
+                              .map((holder, index) => (
+                                <div
+                                  key={holder.wallet}
+                                  onClick={() => router.push(`/trader/${holder.wallet}`)}
+                                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-surface-hover/50 transition-colors cursor-pointer group"
+                                >
+                                  <span className="w-5 text-xs text-text-muted">{index + 1}</span>
+                                  {holder.profileImage ? (
+                                    <img src={holder.profileImage} alt={holder.name} className="w-5 h-5 rounded-full" />
+                                  ) : (
+                                    <div className="w-5 h-5 rounded-full bg-red-500/20 flex items-center justify-center text-[10px] text-red-400">
+                                      {holder.name.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <span className="flex-1 text-sm truncate group-hover:text-accent transition-colors">
+                                    {holder.name}
+                                  </span>
+                                  <span className="text-xs font-mono text-red-400">
+                                    {formatCompactNumber(holder.amount)}
+                                  </span>
+                                </div>
+                              ))}
+                            {outcome2Holders.length === 0 && (
+                              <div className="text-center text-text-muted text-sm py-4">No {outcome2} holders</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 ) : (
                   <div className="p-8 text-center text-text-muted">
                     <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">

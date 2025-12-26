@@ -441,6 +441,8 @@ export async function getMarketById(
       allTimeLow: Math.round(allTimeLow),
       allTimeLowDate,
       platformUrl: `https://polymarket.com/event/${getPolymarketEventSlug(pm)}`,
+      // CLOB token IDs for order book (YES token at [0], NO token at [1])
+      clobTokenIds: tokenIds,
       // Spread/tradability data from cache
       spreadPercent: spreadData?.spreadPercent,
       depth1Pct: spreadData?.depth1Pct,

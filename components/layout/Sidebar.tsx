@@ -193,8 +193,11 @@ export default function Sidebar({ onOpenAlerts, isOpen = true, onClose, searchVa
                 />
               </svg>
             </div>
-            <span className="font-semibold text-lg tracking-tight">
+            <span className="font-semibold text-lg tracking-tight flex items-center">
               Odd<span className="text-accent">Screener</span>
+              <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-medium bg-accent/20 text-accent rounded">
+                Beta
+              </span>
             </span>
           </Link>
           {/* Close button - mobile only */}
