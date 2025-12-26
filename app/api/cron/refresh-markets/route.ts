@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // Allow up to 2 minutes for fetching 10K markets
 
 // Cron job to refresh markets cache every 5 minutes
-// Configure in vercel.json with schedule: "*/5 * * * *"
+// Triggered by external cron service (cron-job.org)
 export async function GET(request: Request) {
   const startTime = Date.now();
 
