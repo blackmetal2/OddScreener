@@ -68,6 +68,8 @@ export interface MarketDetail extends Market {
   allTimeLow: number;
   allTimeLowDate: Date;
   platformUrl: string;
+  // CLOB token IDs for order book (YES token, NO token)
+  clobTokenIds?: string[];
   // Stats breakdown
   stats: {
     trades: number;
@@ -176,6 +178,7 @@ export interface TraderPosition {
   unrealizedPnl: number;
   overallPnl: number;
   resolved: boolean;
+  category?: Category;
 }
 
 export interface TraderClosedPosition {
@@ -188,6 +191,7 @@ export interface TraderClosedPosition {
   totalBought: number;
   realizedPnl: number;
   closedAt: Date;
+  category?: Category;
 }
 
 export interface TraderTrade {
@@ -202,6 +206,7 @@ export interface TraderTrade {
   value: number;
   price: number;
   shares: number;
+  category?: Category;
 }
 
 export interface TraderProfile {
