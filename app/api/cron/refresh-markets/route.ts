@@ -1,9 +1,38 @@
 import { NextResponse } from 'next/server';
 import { writeMarketsToKV, getMarketsCacheStatus } from '@/lib/cache/markets-kv';
 import { fetchPolymarketMarketsWithPagination, parsePolymarketOutcomes, PolymarketMarket } from '@/lib/api/polymarket';
-import { getBatchMarketPriceChanges } from '@/lib/api/snapshots';
+import { getBatchMarketPriceChanges, getCachedSpreads } from '@/lib/api/snapshots';
 import { getKVStatus } from '@/lib/cloudflare-kv';
-import { Market, GlobalStats, Category } from '@/types/market';
+import { Market, GlobalStats, Category, TradabilityStatus } from '@/types/market';
+
+/**
+ * Calculate tradability score and status from spread and depth data
+ */
+function calculateTradability(spread: number, depth: number): {
+  score: number;
+  status: TradabilityStatus;
+} {
+  // Spread scoring (0-5 points)
+  let spreadScore = 0;
+  if (spread < 0.005) spreadScore = 5;      // <0.5%
+  else if (spread < 0.01) spreadScore = 4;  // <1%
+  else if (spread < 0.02) spreadScore = 3;  // <2%
+  else if (spread < 0.05) spreadScore = 2;  // <5%
+  else if (spread < 0.10) spreadScore = 1;  // <10%
+
+  // Depth scoring (0-5 points) based on $K available
+  let depthScore = 0;
+  if (depth > 100000) depthScore = 5;       // >$100K
+  else if (depth > 50000) depthScore = 4;   // >$50K
+  else if (depth > 20000) depthScore = 3;   // >$20K
+  else if (depth > 5000) depthScore = 2;    // >$5K
+  else if (depth > 1000) depthScore = 1;    // >$1K
+
+  const score = spreadScore + depthScore;
+  const status: TradabilityStatus = score >= 8 ? 'excellent' : score >= 6 ? 'good' : score >= 4 ? 'fair' : 'poor';
+
+  return { score, status };
+}
 
 /**
  * Calculate trending score for a market
@@ -85,13 +114,31 @@ export async function GET(request: Request) {
     const priceChanges = await getBatchMarketPriceChanges(marketsForPriceChange);
     console.log(`[Refresh Markets] Got price changes for ${priceChanges.size} markets`);
 
+    // Get spread data from Redis
+    const spreads = await getCachedSpreads();
+    console.log(`[Refresh Markets] Got spread data for ${spreads ? Object.keys(spreads).length : 0} markets`);
+
     // Transform to Market type (with trendingScore calculation)
     const markets: Market[] = rawMarkets.map((pm) => {
       const { outcomes, prices } = parsePolymarketOutcomes(pm);
       const changes = priceChanges.get(pm.id) || { change1h: 0, change6h: 0, change24h: 0 };
+      const spreadData = spreads?.[pm.id];
       const isMultiOutcome = outcomes.length > 2;
       const tagLabels = pm.tags?.map(t => t.label).join(' ') || '';
       const trendingScore = calculateTrendingScore(pm);
+
+      // Calculate tradability from spread data
+      let tradability: { score?: number; status?: TradabilityStatus; spread?: number } = {};
+      if (spreadData) {
+        const spreadDecimal = spreadData.spreadPercent / 100;
+        const depth = spreadData.depth1Pct || pm.liquidityNum || 0;
+        const { score, status } = calculateTradability(spreadDecimal, depth);
+        tradability = {
+          score,
+          status,
+          spread: spreadData.bestAsk - spreadData.bestBid,
+        };
+      }
 
       return {
         id: pm.id,
@@ -110,6 +157,12 @@ export async function GET(request: Request) {
         imageUrl: pm.image || pm.icon,
         isHot: pm.featured || (pm.volume24hrNum || 0) > 1000000,
         trendingScore,
+        // Include spread/tradability data if available
+        spread: tradability.spread,
+        spreadPercent: spreadData?.spreadPercent,
+        depth1Pct: spreadData?.depth1Pct,
+        tradabilityScore: tradability.score,
+        tradabilityStatus: tradability.status,
       };
     });
 
