@@ -73,18 +73,25 @@ export default function TraderProfileClient({
     // Current portfolio value (open positions only)
     const totalValue = positions.reduce((sum, p) => sum + p.currentValue, 0);
 
-    // REALIZED Gains/Losses - ONLY from closed positions (avoid double-counting with open positions)
-    const realizedGains = relevantClosedPositions.filter(p => p.realizedPnl > 0).reduce((sum, p) => sum + p.realizedPnl, 0);
-    const realizedLosses = relevantClosedPositions.filter(p => p.realizedPnl < 0).reduce((sum, p) => sum + Math.abs(p.realizedPnl), 0);
+    // Total Gains/Losses - Include BOTH open (unrealized) and closed (realized) positions
+    // Open positions: use overallPnl (realized + unrealized for that market)
+    // Closed positions: use realizedPnl (fully closed, all realized)
+    const openGains = positions.filter(p => p.overallPnl > 0).reduce((sum, p) => sum + p.overallPnl, 0);
+    const closedGains = relevantClosedPositions.filter(p => p.realizedPnl > 0).reduce((sum, p) => sum + p.realizedPnl, 0);
+    const totalGains = openGains + closedGains;
+
+    const openLosses = positions.filter(p => p.overallPnl < 0).reduce((sum, p) => sum + Math.abs(p.overallPnl), 0);
+    const closedLosses = relevantClosedPositions.filter(p => p.realizedPnl < 0).reduce((sum, p) => sum + Math.abs(p.realizedPnl), 0);
+    const totalLosses = openLosses + closedLosses;
 
     // Win rate: Only from closed positions (finalized outcomes)
-    const closedWins = relevantClosedPositions.filter(p => p.realizedPnl > 0).length;
-    const closedLosses = relevantClosedPositions.filter(p => p.realizedPnl < 0).length;
+    const closedWinsCount = relevantClosedPositions.filter(p => p.realizedPnl > 0).length;
+    const closedLossesCount = relevantClosedPositions.filter(p => p.realizedPnl < 0).length;
     const totalClosedCount = relevantClosedPositions.length;
-    const winRate = totalClosedCount > 0 ? (closedWins / totalClosedCount) * 100 : 0;
+    const winRate = totalClosedCount > 0 ? (closedWinsCount / totalClosedCount) * 100 : 0;
 
-    // Profit Factor = Realized Gains / Realized Losses
-    const profitFactor = realizedLosses > 0 ? realizedGains / realizedLosses : realizedGains > 0 ? Infinity : 0;
+    // Profit Factor = Total Gains / Total Losses (includes both open and closed positions)
+    const profitFactor = totalLosses > 0 ? totalGains / totalLosses : totalGains > 0 ? Infinity : 0;
 
     const activePositions = positions.filter(p => !p.resolved && p.currentValue > 0);
 
@@ -97,8 +104,8 @@ export default function TraderProfileClient({
 
     return {
       totalPnl,
-      totalGains: realizedGains,
-      totalLosses: realizedLosses,
+      totalGains,
+      totalLosses,
       winRate,
       profitFactor,
       totalValue,
@@ -264,8 +271,8 @@ export default function TraderProfileClient({
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
           <StatCard label="Total PnL" value={stats.totalPnl} isCurrency colored />
-          <StatCard label="Realized Gains" value={stats.totalGains} isCurrency positive />
-          <StatCard label="Realized Losses" value={-stats.totalLosses} isCurrency negative />
+          <StatCard label="Total Gains" value={stats.totalGains} isCurrency positive />
+          <StatCard label="Total Losses" value={-stats.totalLosses} isCurrency negative />
           <StatCard
             label="Profit Factor"
             value={stats.profitFactor === Infinity ? 999 : stats.profitFactor}
