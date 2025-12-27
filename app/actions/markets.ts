@@ -218,7 +218,14 @@ export async function fetchTrades(
  */
 export async function fetchGlobalStats(): Promise<GlobalStats> {
   try {
-    // Try cache first (includes pre-calculated stats)
+    // Try KV cache first (primary)
+    const kvData = await readMarketsFromKV();
+    if (kvData && kvData.stats) {
+      console.log(`[Stats] Using KV cache (${kvData.stats.activeMarkets} markets)`);
+      return kvData.stats;
+    }
+
+    // Fallback to file cache
     const cache = await readMarketsCache();
     if (cache && !isCacheStale(cache)) {
       return cache.stats;
