@@ -3,7 +3,7 @@ import { fetchMarkets, fetchGlobalStats } from './actions/markets';
 import MarketsPageClient from './MarketsPageClient';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 60; // Revalidate every 60 seconds
+export const revalidate = 0; // Always fetch fresh data
 
 async function MarketsData() {
   const [markets, stats] = await Promise.all([
