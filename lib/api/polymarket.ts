@@ -22,7 +22,7 @@ const CACHE_DURATION = 60; // 60 seconds
 const EXCLUDED_TAG_IDS = ['1312', '1', '100639', '102127'];
 
 // Minimum volume threshold to filter garbage markets
-const MIN_VOLUME_THRESHOLD = 1000; // $1,000 minimum 24h volume
+const MIN_VOLUME_THRESHOLD = 100; // $100 minimum 24h volume
 
 /**
  * Fetch all active events with their markets from Polymarket
